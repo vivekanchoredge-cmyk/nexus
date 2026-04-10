@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS - Agentic Trading System</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: linear-gradient(135deg, #0a0e27 0%, #141829 100%); color: #e4e6eb; font-family: 'Monaco', monospace; min-height: 100vh; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    header { text-align: center; padding: 30px; margin-bottom: 20px; background: rgba(168,85,247,0.15); border: 2px solid rgba(168,85,247,0.4); border-radius: 12px; }
+    h1 { font-size: 2.5em; color: #a855f7; margin-bottom: 8px; }
+    .subtitle { color: #a0a6b8; font-size: 13px; }
+    .config { background: rgba(26,31,58,0.85); border: 1px solid rgba(168,85,247,0.3); padding: 20px; border-radius: 10px; margin-bottom: 20px; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto auto; gap: 12px; align-items: center; }
+    .config-item { display: flex; flex-direction: column; gap: 5px; }
+    .config-label { font-size: 11px; color: #a855f7; text-transform: uppercase; font-weight: bold; }
+    input, select { padding: 10px; background: rgba(26,31,58,0.8); border: 1px solid rgba(168,85,247,0.3); color: #e4e6eb; border-radius: 6px; font-size: 12px; font-family: 'Monaco'; }
+    .btn { padding: 10px 20px; background: linear-gradient(135deg, #a855f7, #3b82f6); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; height: fit-content; }
+    .btn:hover { box-shadow: 0 0 15px rgba(168,85,247,0.4); }
+    .btn-stop { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .status { display: inline-block; padding: 8px 16px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+    .status.running { background: rgba(59,130,246,0.2); color: #3b82f6; border: 1px solid #3b82f6; animation: pulse 2s infinite; }
+    .status.ready { background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    .layout { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; }
+    .panel { background: rgba(26,31,58,0.85); border: 1px solid rgba(168,85,247,0.2); border-radius: 10px; padding: 20px; }
+    .panel h2 { color: #a855f7; margin-bottom: 15px; font-size: 13px; text-transform: uppercase; }
+    .stat { padding: 12px; background: rgba(26,31,58,0.7); border-left: 3px solid #10b981; border-radius: 6px; margin-bottom: 10px; }
+    .stat-label { font-size: 9px; color: #a0a6b8; margin-bottom: 4px; }
+    .stat-value { font-size: 20px; font-weight: bold; color: #10b981; }
+    .log { background: rgba(10,14,39,0.95); height: 400px; overflow-y: auto; border: 1px solid rgba(59,130,246,0.2); border-radius: 10px; padding: 12px; margin-top: 15px; }
+    .log-entry { padding: 6px; margin-bottom: 4px; border-left: 2px solid #3b82f6; background: rgba(26,31,58,0.8); font-size: 9px; border-radius: 4px; }
+    .log-entry.reasoning { border-left-color: #a855f7; color: #a855f7; }
+    .log-entry.trade { border-left-color: #10b981; color: #10b981; font-weight: bold; }
+    .log-entry.risk { border-left-color: #f59e0b; color: #f59e0b; }
+    .holding { padding: 8px; background: rgba(26,31,58,0.7); border-left: 3px solid #10b981; border-radius: 6px; margin-bottom: 6px; font-size: 9px; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(26,31,58,0.3); }
+    ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.5); border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🤖 NEXUS - AGENTIC TRADING SYSTEM</h1>
+      <p class="subtitle">Autonomous • Intelligent • Self-Learning • Production-Ready</p>
+    </header>
+
+    <div class="config">
+      <div class="config-item">
+        <label class="config-label">API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-ant-xxxxx">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Min Confidence</label>
+        <input type="number" id="minConfidence" value="7" min="5" max="10">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Max Positions</label>
+        <input type="number" id="maxPositions" value="5" min="2" max="10">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Risk %</label>
+        <input type="number" id="riskPercent" value="20" min="5" max="40">
+      </div>
+      <button class="btn" id="startBtn" onclick="startAgent()">▶️ START</button>
+      <button class="btn btn-stop" id="stopBtn" onclick="stopAgent()" style="display: none;">⏹️ STOP</button>
+    </div>
+
+    <div style="text-align: center; margin-bottom: 20px;">
+      <span class="status ready" id="status">⏳ Ready</span>
+      <span id="agentStatus" style="margin-left: 15px; color: #a0a6b8; font-size: 11px;"></span>
+    </div>
+
+    <div class="layout">
+      <div class="panel">
+        <h2>💰 Portfolio</h2>
+        <div class="stat">
+          <div class="stat-label">Total Value</div>
+          <div class="stat-value" id="totalValue">$10,000</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Cash</div>
+          <div class="stat-value" id="cash">$10,000</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L</div>
+          <div class="stat-value" id="pnl" style="color: #10b981;">+$0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Positions</div>
+          <div class="stat-value" id="positions">0/5</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Trades</div>
+          <div class="stat-value" id="trades">0</div>
+        </div>
+
+        <h2 style="margin-top: 15px;">💎 Holdings</h2>
+        <div id="holdings"></div>
+      </div>
+
+      <div class="panel">
+        <h2>🧠 Agentic Reasoning Log</h2>
+        <div style="padding: 10px; background: rgba(168,85,247,0.1); border-radius: 6px; margin-bottom: 10px; font-size: 9px;">
+          <strong>Agent:</strong> <span id="agentMode">INACTIVE</span><br>
+          <strong>Cycle:</strong> <span id="reasoningCycle">0</span>
+        </div>
+        <div class="log" id="log"></div>
+      </div>
+
+      <div class="panel">
+        <h2>📊 Intelligence</h2>
+        <div class="stat">
+          <div class="stat-label">Market Regime</div>
+          <div id="marketRegime" style="font-size: 11px; color: #a0a6b8;">Analyzing...</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Risk Level</div>
+          <div id="riskLevel" style="font-size: 11px; color: #f59e0b;">MEDIUM</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Positions</div>
+          <div id="diversification" style="font-size: 11px; color: #10b981;">0/5</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Win Rate</div>
+          <div id="winRate" style="font-size: 11px; color: #10b981;">0%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let agentRunning = false;
+    let reasoningCycle = 0;
+
+    const TOP50_COINS = [
+      'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'POLKADOT', 'LINK', 'MATIC',
+      'LTC', 'BCH', 'XLM', 'ATOM', 'UNI', 'AVAX', 'NEAR', 'VET', 'ALGO', 'ICP'
+    ];
+
+    let coins = {};
+
+    function initializeCoins() {
+      TOP50_COINS.forEach((symbol, index) => {
+        coins[symbol] = {
+          symbol,
+          price: 50000 / Math.pow(index + 1, 0.65),
+          vol: 5 + Math.random() * 15,
+          rank: index + 1
+        };
+      });
+    }
+
+    function updatePrices() {
+      Object.values(coins).forEach(c => {
+        c.price *= (1 + (Math.random() - 0.5) * 0.08);
+      });
+    }
+
+    function log(msg, type = 'reasoning') {
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function startAgent() {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      if (!apiKey.startsWith('sk-ant-')) {
+        log('❌ Invalid API key', 'risk');
+        return;
+      }
+
+      agentRunning = true;
+      document.getElementById('status').className = 'status running';
+      document.getElementById('status').textContent = '✅ RUNNING';
+      document.getElementById('agentMode').textContent = 'ACTIVE';
+      document.getElementById('startBtn').style.display = 'none';
+      document.getElementById('stopBtn').style.display = 'block';
+
+      log('🚀 NEXUS Agentic Agent Started', 'reasoning');
+      log('🧠 Initializing autonomous reasoning engine...', 'reasoning');
+
+      try {
+        await fetch('/api/agent/init', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            apiKey,
+            minConfidence: parseInt(document.getElementById('minConfidence').value),
+            maxPositions: parseInt(document.getElementById('maxPositions').value)
+          })
+        });
+      } catch (e) {
+        log(`❌ Failed: ${e.message}`, 'risk');
+        return;
+      }
+
+      agentLoop();
+    }
+
+    function stopAgent() {
+      agentRunning = false;
+      document.getElementById('status').className = 'status ready';
+      document.getElementById('status').textContent = '⏹️ STOPPED';
+      document.getElementById('agentMode').textContent = 'INACTIVE';
+      document.getElementById('startBtn').style.display = 'block';
+      document.getElementById('stopBtn').style.display = 'none';
+      log('⏹️ Agent stopped', 'reasoning');
+    }
+
+    async function agentLoop() {
+      if (!agentRunning) return;
+
+      updatePrices();
+      reasoningCycle++;
+      document.getElementById('reasoningCycle').textContent = reasoningCycle;
+
+      const ranked = Object.values(coins)
+        .sort((a, b) => b.vol - a.vol)
+        .slice(0, 10);
+
+      log(`🔍 PERCEIVE: Analyzing ${ranked.length} coins...`, 'reasoning');
+
+      try {
+        const response = await fetch('/api/agent/cycle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ coins: ranked })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          log(`✅ CYCLE COMPLETE: ${Object.keys(data.holdings).length} positions`, 'reasoning');
+          updatePortfolioUI(data);
+        } else {
+          log(`⚠️ Error: ${data.error}`, 'risk');
+        }
+      } catch (error) {
+        log(`❌ ${error.message}`, 'risk');
+      }
+
+      if (agentRunning) {
+        setTimeout(agentLoop, 60000);
+      }
+    }
+
+    function updatePortfolioUI(data) {
+      fetch('/api/agent/state')
+        .then(r => r.json())
+        .then(state => {
+          document.getElementById('totalValue').textContent = `$${state.portfolio.totalValue.toFixed(2)}`;
+          document.getElementById('cash').textContent = `$${state.portfolio.totalCash.toFixed(2)}`;
+          document.getElementById('pnl').textContent = `${state.portfolio.pnl >= 0 ? '+' : ''}$${state.portfolio.pnl.toFixed(2)}`;
+          document.getElementById('pnl').style.color = state.portfolio.pnl >= 0 ? '#10b981' : '#ef4444';
+          document.getElementById('positions').textContent = `${Object.keys(state.portfolio.holdings).length}/${state.agentConfig.maxPositions}`;
+          document.getElementById('trades').textContent = state.portfolio.trades;
+          document.getElementById('diversification').textContent = `${Object.keys(state.portfolio.holdings).length}/5`;
+
+          const holdingsEl = document.getElementById('holdings');
+          holdingsEl.innerHTML = Object.entries(state.portfolio.holdings).length === 0 ?
+            '<div style="color:#a0a6b8;font-size:9px;">No positions</div>' :
+            Object.entries(state.portfolio.holdings).map(([sym, h]) => {
+              const currentValue = h.shares * h.currentPrice;
+              const pnl = currentValue - (h.shares * h.entryPrice);
+              return `<div class="holding">${sym}: ${h.shares.toFixed(4)} | P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>`;
+            }).join('');
+        });
+    }
+
+    initializeCoins();
+  </script>
+</body>
+</html>
