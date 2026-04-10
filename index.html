@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS - Agentic Trading System</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0e1a; color: #e4e6eb; font-family: 'Monaco', 'Courier New', monospace; min-height: 100vh; }
+    .container { max-width: 1800px; margin: 0 auto; padding: 16px; }
+    header { text-align: center; padding: 24px; margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(168,85,247,0.12), rgba(59,130,246,0.08));
+      border: 1px solid rgba(168,85,247,0.35); border-radius: 12px; }
+    h1 { font-size: 2em; color: #a855f7; margin-bottom: 6px; letter-spacing: 2px; }
+    .subtitle { color: #6b7280; font-size: 11px; letter-spacing: 1px; }
+    .config-panel { background: rgba(16,20,40,0.9); border: 1px solid rgba(168,85,247,0.25);
+      padding: 16px; border-radius: 10px; margin-bottom: 16px; }
+    .config-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; }
+    .config-item { display: flex; flex-direction: column; gap: 5px; }
+    .config-label { font-size: 10px; color: #a855f7; text-transform: uppercase; font-weight: bold; letter-spacing: 1px; }
+    input, select { padding: 9px 10px; background: rgba(10,14,30,0.9); border: 1px solid rgba(168,85,247,0.3);
+      color: #e4e6eb; border-radius: 6px; font-size: 12px; font-family: 'Monaco', monospace; }
+    .control-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; font-family: 'Monaco', monospace; transition: all 0.2s; }
+    .btn-start { background: linear-gradient(135deg, #a855f7, #7c3aed); color: white; }
+    .btn-start:hover { box-shadow: 0 0 20px rgba(168,85,247,0.5); }
+    .btn-stop { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
+    .btn-reset { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+    .status-bar { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+    .status-badge { padding: 6px 14px; border-radius: 20px; font-size: 10px; font-weight: bold; }
+    .status-stopped { background: rgba(107,114,128,0.2); color: #9ca3af; border: 1px solid #6b7280; }
+    .status-running { background: rgba(59,130,246,0.15); color: #3b82f6; border: 1px solid #3b82f6; animation: pulse 2s infinite; }
+    .status-thinking { background: rgba(168,85,247,0.15); color: #a855f7; border: 1px solid #a855f7; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+    @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr);}}
+    @media(max-width:600px){.grid-4{grid-template-columns:1fr 1fr;}.grid-2{grid-template-columns:1fr;}}
+    .panel { background: rgba(16,20,40,0.85); border: 1px solid rgba(168,85,247,0.15); border-radius: 10px; padding: 16px; }
+    .panel-title { color: #a855f7; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+      border-bottom: 1px solid rgba(168,85,247,0.15); padding-bottom: 10px; margin-bottom: 12px; font-weight: bold; }
+    .stat { padding: 10px 12px; background: rgba(10,14,30,0.6); border-left: 3px solid #10b981; border-radius: 5px; margin-bottom: 8px; }
+    .stat-label { font-size: 9px; color: #6b7280; margin-bottom: 3px; text-transform: uppercase; }
+    .stat-value { font-size: 17px; font-weight: bold; color: #10b981; }
+    .red{color:#ef4444!important} .yellow{color:#f59e0b!important} .blue{color:#3b82f6!important} .purple{color:#a855f7!important} .sm{font-size:12px!important}
+    .chart-container { position: relative; height: 280px; }
+    .holding-item { padding: 10px; background: rgba(10,14,30,0.7); border-left: 3px solid #10b981; border-radius: 5px; margin-bottom: 8px; font-size: 10px; line-height: 1.7; }
+    .holding-item.loss { border-left-color: #ef4444; }
+    .trade-item { padding: 10px; background: rgba(10,14,30,0.7); border-radius: 5px; margin-bottom: 7px; font-size: 9px; line-height: 1.6; border-left: 3px solid #3b82f6; }
+    .trade-item.profit { border-left-color: #10b981; } .trade-item.loss { border-left-color: #ef4444; }
+    .log { background: rgba(5,8,20,0.98); height: 380px; overflow-y: auto; border: 1px solid rgba(59,130,246,0.15); border-radius: 8px; padding: 10px; }
+    .log-entry { padding: 5px 8px; margin-bottom: 4px; border-left: 2px solid #3b82f6; background: rgba(16,20,40,0.7); font-size: 9px; border-radius: 3px; line-height: 1.5; word-break: break-word; }
+    .log-entry.info{border-left-color:#3b82f6;color:#93c5fd;}
+    .log-entry.reasoning{border-left-color:#a855f7;color:#d8b4fe;}
+    .log-entry.trade-buy{border-left-color:#10b981;color:#6ee7b7;font-weight:bold;}
+    .log-entry.trade-sell{border-left-color:#f59e0b;color:#fcd34d;font-weight:bold;}
+    .log-entry.risk{border-left-color:#f59e0b;color:#fcd34d;}
+    .log-entry.error{border-left-color:#ef4444;color:#fca5a5;}
+    .log-entry.success{border-left-color:#10b981;color:#6ee7b7;}
+    .coin-table{width:100%;border-collapse:collapse;font-size:9px;}
+    .coin-table th{color:#6b7280;text-align:left;padding:5px 8px;border-bottom:1px solid rgba(168,85,247,0.1);}
+    .coin-table td{padding:5px 8px;border-bottom:1px solid rgba(168,85,247,0.05);}
+    .up{color:#10b981} .dn{color:#ef4444} .nt{color:#6b7280}
+    .rsi-bar{display:inline-block;width:36px;height:4px;background:rgba(107,114,128,0.3);border-radius:3px;vertical-align:middle;margin-left:3px;overflow:hidden;}
+    .rsi-fill{height:100%;border-radius:3px;}
+    ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-track{background:rgba(16,20,40,0.3);} ::-webkit-scrollbar-thumb{background:rgba(168,85,247,0.4);border-radius:3px;}
+    .empty-state{color:#4b5563;font-size:10px;padding:16px 0;text-align:center;}
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🤖 NEXUS — AGENTIC TRADING SYSTEM</h1>
+    <p class="subtitle">Autonomous • Claude-Powered • Technical Analysis • Real Decisions • No Server Needed</p>
+  </header>
+
+  <div class="config-panel">
+    <div class="config-row">
+      <div class="config-item" style="grid-column:span 2">
+        <label class="config-label">Anthropic API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-ant-api03-...">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Claude Model</label>
+        <select id="model">
+          <option value="claude-haiku-4-5-20251001">Haiku 4.5 (Fast)</option>
+          <option value="claude-sonnet-4-20250514" selected>Sonnet 4 (Smart)</option>
+        </select>
+      </div>
+      <div class="config-item">
+        <label class="config-label">Cycle Interval</label>
+        <select id="interval">
+          <option value="30000">30 sec</option>
+          <option value="60000" selected>1 min</option>
+          <option value="120000">2 min</option>
+        </select>
+      </div>
+      <div class="config-item">
+        <label class="config-label">Min Confidence</label>
+        <input type="number" id="minConf" value="7" min="5" max="10" step="0.5">
+      </div>
+    </div>
+    <div class="config-row">
+      <div class="config-item">
+        <label class="config-label">Max Positions</label>
+        <input type="number" id="maxPos" value="5" min="2" max="10">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Risk % / Trade</label>
+        <input type="number" id="riskPct" value="20" min="5" max="40">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Stop Loss %</label>
+        <input type="number" id="slPct" value="3" min="1" max="10">
+      </div>
+      <div class="config-item">
+        <label class="config-label">Take Profit %</label>
+        <input type="number" id="tpPct" value="8" min="2" max="25">
+      </div>
+    </div>
+    <div class="control-buttons">
+      <button class="btn btn-start" id="startBtn" onclick="startAgent()">▶ START AGENT</button>
+      <button class="btn btn-stop" id="stopBtn" onclick="stopAgent()" style="display:none">⏹ STOP AGENT</button>
+      <button class="btn btn-reset" onclick="resetAll()">↺ RESET</button>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-badge status-stopped" id="statusBadge">⏹ STOPPED</div>
+    <span style="font-size:10px;color:#6b7280">
+      Model: <span id="modelDisp">—</span> &nbsp;|&nbsp;
+      Cycle: <span id="cycleDisp">0</span> &nbsp;|&nbsp;
+      API Calls: <span id="apiDisp">0</span> &nbsp;|&nbsp;
+      Last: <span id="lastRun">—</span>
+    </span>
+  </div>
+
+  <div class="grid-4">
+    <div class="panel">
+      <div class="panel-title">💰 Portfolio</div>
+      <div class="stat"><div class="stat-label">Total Value</div><div class="stat-value" id="totalVal">$10,000.00</div></div>
+      <div class="stat"><div class="stat-label">Cash</div><div class="stat-value blue" id="cashVal">$10,000.00</div></div>
+      <div class="stat"><div class="stat-label">P&amp;L</div><div class="stat-value" id="pnlVal">+$0.00</div></div>
+      <div class="stat"><div class="stat-label">Open Positions</div><div class="stat-value purple" id="posCount">0 / 5</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">📊 Trading Stats</div>
+      <div class="stat"><div class="stat-label">Closed Trades</div><div class="stat-value blue" id="tradeCount">0</div></div>
+      <div class="stat"><div class="stat-label">Win Rate</div><div class="stat-value" id="winRate">0%</div></div>
+      <div class="stat"><div class="stat-label">Total Profit</div><div class="stat-value" id="profitVal">$0.00</div></div>
+      <div class="stat"><div class="stat-label">Total Loss</div><div class="stat-value red" id="lossVal">$0.00</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">🎯 Risk Metrics</div>
+      <div class="stat"><div class="stat-label">Max Drawdown</div><div class="stat-value red" id="drawdown">0.00%</div></div>
+      <div class="stat"><div class="stat-label">Risk Level</div><div class="stat-value" id="riskLevel">LOW</div></div>
+      <div class="stat"><div class="stat-label">Invested %</div><div class="stat-value yellow" id="invested">0%</div></div>
+      <div class="stat"><div class="stat-label">Peak Value</div><div class="stat-value" id="peakVal">$10,000.00</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">🤖 Agent Status</div>
+      <div class="stat"><div class="stat-label">Reasoning Cycles</div><div class="stat-value purple" id="cycles">0</div></div>
+      <div class="stat"><div class="stat-label">Agent Mode</div><div class="stat-value" id="agentMode">INACTIVE</div></div>
+      <div class="stat"><div class="stat-label">Last Analysis</div><div class="stat-value sm" id="lastAnalysis">—</div></div>
+      <div class="stat"><div class="stat-label">API Calls</div><div class="stat-value blue" id="apiCalls">0</div></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <div class="panel-title">📈 Price Chart (Live)</div>
+      <div class="chart-container"><canvas id="priceChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">💎 Open Positions</div>
+      <div id="holdings" style="max-height:320px;overflow-y:auto"><div class="empty-state">No open positions</div></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <div class="panel-title">🔭 Market Scanner</div>
+      <div style="max-height:340px;overflow-y:auto">
+        <table class="coin-table"><thead><tr><th>Symbol</th><th>Price</th><th>1h Chg</th><th>RSI</th><th>Mom%</th><th>Signal</th></tr></thead>
+        <tbody id="marketBody"></tbody></table>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">📝 Trade History</div>
+      <div id="tradeHistory" style="max-height:340px;overflow-y:auto"><div class="empty-state">No completed trades</div></div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px">
+    <div class="panel-title">🧠 Claude Reasoning Log</div>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script>
+// ── STATE ──────────────────────────────────────────────────────────────
+let agentRunning=false,agentTimer=null,cycle=0,apiCalls=0,peakVal=10000;
+let chart=null,timeLabels=[];
+let portfolio={cash:10000,holdings:{},closed:[]};
+
+// ── COIN DATA ──────────────────────────────────────────────────────────
+const BASE={
+  BTC:{p:67400,v:2.4e10,vol:0.003},ETH:{p:3520,v:1.1e10,vol:0.004},
+  BNB:{p:425,v:3.2e9,vol:0.005},SOL:{p:188,v:4.5e9,vol:0.006},
+  XRP:{p:0.62,v:2.9e9,vol:0.005},DOGE:{p:0.18,v:2.1e9,vol:0.008},
+  ADA:{p:0.55,v:1.4e9,vol:0.005},AVAX:{p:44,v:1.8e9,vol:0.007},
+  LINK:{p:18.5,v:1.2e9,vol:0.006},DOT:{p:9.8,v:9.5e8,vol:0.006},
+  MATIC:{p:0.98,v:1.1e9,vol:0.006},UNI:{p:12.4,v:7.8e8,vol:0.006},
+  ATOM:{p:11.2,v:6.5e8,vol:0.005},NEAR:{p:7.8,v:8.2e8,vol:0.007},
+  LTC:{p:95,v:7.1e8,vol:0.004},AAVE:{p:185,v:5.5e8,vol:0.006},
+  ARB:{p:1.42,v:9.2e8,vol:0.008},OP:{p:2.85,v:7.4e8,vol:0.008},
+  INJ:{p:38,v:6.8e8,vol:0.009},TIA:{p:18,v:5.9e8,vol:0.009}
+};
+let coins={};
+function initCoins(){
+  Object.entries(BASE).forEach(([s,b])=>{
+    const p=b.p*(0.97+Math.random()*0.06);
+    const hist=[];
+    let cur=p;
+    for(let i=0;i<25;i++){cur*=(1+(Math.random()-0.5)*0.015);hist.push(cur);}
+    coins[s]={s,p:cur,base:b.p,v:b.v*(0.8+Math.random()*0.4),vol:b.vol,hist,trend:(Math.random()-0.48)*0.001};
+  });
+}
+
+// ── PRICE SIMULATION ───────────────────────────────────────────────────
+function tick(){
+  Object.values(coins).forEach(c=>{
+    if(Math.random()<0.05)c.trend=(Math.random()-0.48)*0.001;
+    const chg=c.trend+(Math.random()-0.5)*c.vol;
+    c.p=Math.max(c.p*(1+chg),0.0001);
+    c.hist.push(c.p);
+    if(c.hist.length>60)c.hist.shift();
+  });
+  timeLabels.push(new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'}));
+  if(timeLabels.length>60)timeLabels.shift();
+}
+
+// ── INDICATORS ────────────────────────────────────────────────────────
+function rsi(h,n=14){
+  if(h.length<n+1)return 50;
+  let g=0,l=0;
+  for(let i=h.length-n;i<h.length;i++){const d=h[i]-h[i-1];if(d>0)g+=d;else l-=d;}
+  if(l===0)return 100;
+  return 100-(100/(1+(g/n)/(l/n)));
+}
+function mom(h,n=6){
+  if(h.length<n+2)return 0;
+  return((h[h.length-1]-h[h.length-n-1])/h[h.length-n-1])*100;
+}
+function chg1h(c){
+  const h=c.hist;if(h.length<3)return 0;
+  const old=h[Math.max(0,h.length-10)];
+  return((c.p-old)/old)*100;
+}
+function fmt(p){return p<1?p.toFixed(4):p<100?p.toFixed(2):p.toFixed(0);}
+
+// ── CHART ─────────────────────────────────────────────────────────────
+const COLORS=['#a855f7','#3b82f6','#10b981','#f59e0b','#ef4444'];
+function updateChart(){
+  const top5=Object.values(coins).sort((a,b)=>b.v-a.v).slice(0,5);
+  if(!chart){
+    const ctx=document.getElementById('priceChart').getContext('2d');
+    chart=new Chart(ctx,{type:'line',data:{labels:[...timeLabels],
+      datasets:top5.map((c,i)=>({label:c.s,data:[...c.hist],borderColor:COLORS[i],borderWidth:1.5,tension:0.3,fill:false,pointRadius:0}))},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,
+        plugins:{legend:{labels:{color:'#9ca3af',font:{size:9},boxWidth:12}}},
+        scales:{y:{ticks:{color:'#6b7280',font:{size:8}},grid:{color:'rgba(168,85,247,0.08)'}},
+                x:{ticks:{color:'#6b7280',font:{size:7},maxTicksLimit:6},grid:{color:'rgba(168,85,247,0.05)'}}}}});
+  } else {
+    chart.data.labels=[...timeLabels];
+    chart.data.datasets.forEach((ds,i)=>{if(top5[i])ds.data=[...top5[i].hist];});
+    chart.update('none');
+  }
+}
+
+// ── MARKET TABLE ──────────────────────────────────────────────────────
+function updateTable(){
+  const rows=Object.values(coins).sort((a,b)=>b.v-a.v).slice(0,15);
+  document.getElementById('marketBody').innerHTML=rows.map(c=>{
+    const r=rsi(c.hist),m=mom(c.hist),ch=chg1h(c);
+    const rc=r>70?'#ef4444':r<30?'#10b981':'#9ca3af';
+    let sig='—';
+    if(r<35&&m>0)sig='<span style="color:#10b981">▲ BUY?</span>';
+    else if(r>65&&m<0)sig='<span style="color:#ef4444">▼ OVRB</span>';
+    else if(m>1.5)sig='<span style="color:#6ee7b7">↑ MOM</span>';
+    else if(m<-1.5)sig='<span style="color:#fca5a5">↓ WEAK</span>';
+    return`<tr><td><strong>${c.s}</strong></td>
+      <td>$${fmt(c.p)}</td>
+      <td class="${ch>=0?'up':'dn'}">${ch>=0?'+':''}${ch.toFixed(2)}%</td>
+      <td><span style="color:${rc}">${r.toFixed(0)}</span><span class="rsi-bar"><span class="rsi-fill" style="width:${r}%;background:${rc}"></span></span></td>
+      <td class="${m>=0?'up':'dn'}">${m>=0?'+':''}${m.toFixed(2)}%</td>
+      <td>${sig}</td></tr>`;
+  }).join('');
+}
+
+// ── EXIT CHECKER ──────────────────────────────────────────────────────
+function checkExits(){
+  Object.entries(portfolio.holdings).forEach(([s,h])=>{
+    const cur=coins[s]?.p;if(!cur)return;
+    if(cur<=h.sl||cur>=h.tp){
+      const reason=cur<=h.sl?'STOP LOSS':'TAKE PROFIT';
+      const pnl=(cur-h.ep)*h.qty;
+      portfolio.cash+=cur*h.qty;
+      portfolio.closed.push({s,ep:h.ep,xp:cur,qty:h.qty,pnl,reason,time:new Date().toLocaleTimeString()});
+      delete portfolio.holdings[s];
+      log(`${reason==='TAKE PROFIT'?'✅':'🛑'} ${reason}: ${s} @ $${fmt(cur)} | P&L: ${pnl>=0?'+':''}$${pnl.toFixed(2)}`,pnl>=0?'trade-buy':'risk');
+    }
+  });
+}
+
+// ── UI UPDATE ─────────────────────────────────────────────────────────
+function calcTotal(){
+  let v=portfolio.cash;
+  Object.entries(portfolio.holdings).forEach(([s,h])=>v+=h.qty*(coins[s]?.p||h.ep));
+  return v;
+}
+function updateUI(){
+  const total=calcTotal(),pnl=total-10000;
+  if(total>peakVal)peakVal=total;
+  const dd=peakVal>0?((peakVal-total)/peakVal*100):0;
+  const maxP=parseInt(document.getElementById('maxPos').value)||5;
+  const openN=Object.keys(portfolio.holdings).length;
+
+  document.getElementById('totalVal').textContent=`$${total.toFixed(2)}`;
+  document.getElementById('cashVal').textContent=`$${portfolio.cash.toFixed(2)}`;
+  const pe=document.getElementById('pnlVal');
+  pe.textContent=`${pnl>=0?'+':''}$${pnl.toFixed(2)}`;
+  pe.className=`stat-value${pnl<0?' red':''}`;
+  document.getElementById('posCount').textContent=`${openN} / ${maxP}`;
+  document.getElementById('peakVal').textContent=`$${peakVal.toFixed(2)}`;
+  document.getElementById('drawdown').textContent=`${dd.toFixed(2)}%`;
+  const rll=dd>15?'HIGH':dd>7?'MED':'LOW';
+  const rle=document.getElementById('riskLevel');
+  rle.textContent=rll;rle.className=`stat-value${rll==='HIGH'?' red':rll==='MED'?' yellow':''}`;
+  const inv=(total-portfolio.cash)/total*100;
+  document.getElementById('invested').textContent=`${inv.toFixed(0)}%`;
+
+  const cl=portfolio.closed;
+  document.getElementById('tradeCount').textContent=cl.length;
+  const wins=cl.filter(t=>t.pnl>0);
+  const wr=cl.length?((wins.length/cl.length)*100).toFixed(1):0;
+  const wre=document.getElementById('winRate');
+  wre.textContent=`${wr}%`;wre.className=`stat-value${wr<50?' red':''}`;
+  document.getElementById('profitVal').textContent=`$${wins.reduce((s,t)=>s+t.pnl,0).toFixed(2)}`;
+  document.getElementById('lossVal').textContent=`$${Math.abs(cl.filter(t=>t.pnl<0).reduce((s,t)=>s+t.pnl,0)).toFixed(2)}`;
+
+  // Holdings
+  const he=document.getElementById('holdings');
+  const hlist=Object.entries(portfolio.holdings);
+  if(!hlist.length){he.innerHTML='<div class="empty-state">No open positions</div>';}
+  else he.innerHTML=hlist.map(([s,h])=>{
+    const cur=coins[s]?.p||h.ep;const pn=(cur-h.ep)*h.qty;const pt=((cur-h.ep)/h.ep*100).toFixed(2);
+    return`<div class="holding-item${pn<0?' loss':''}">
+      <strong style="color:${pn>=0?'#10b981':'#ef4444'}">${s}</strong>
+      <span style="float:right;color:${pn>=0?'#10b981':'#ef4444'}">${pn>=0?'+':''}$${pn.toFixed(2)} (${pt}%)</span><br>
+      Entry: $${fmt(h.ep)} → Now: $${fmt(cur)}<br>
+      SL: <span style="color:#ef4444">$${fmt(h.sl)}</span> | TP: <span style="color:#10b981">$${fmt(h.tp)}</span><br>
+      Qty: ${h.qty.toFixed(4)} | Size: $${(h.qty*h.ep).toFixed(2)}
+    </div>`;
+  }).join('');
+
+  // Trade history
+  const te=document.getElementById('tradeHistory');
+  if(!cl.length){te.innerHTML='<div class="empty-state">No completed trades</div>';}
+  else te.innerHTML=cl.slice(-20).reverse().map(t=>`
+    <div class="trade-item ${t.pnl>=0?'profit':'loss'}">
+      <strong style="color:${t.pnl>=0?'#10b981':'#ef4444'}">${t.s}</strong> CLOSED |
+      <span style="color:${t.pnl>=0?'#10b981':'#ef4444'}">${t.pnl>=0?'+':''}$${t.pnl.toFixed(2)}</span><br>
+      Entry $${fmt(t.ep)} → Exit $${fmt(t.xp)} | <em>${t.reason}</em><br>
+      <span style="color:#6b7280">${t.time}</span>
+    </div>`).join('');
+}
+
+// ── CLAUDE API ────────────────────────────────────────────────────────
+async function callClaude(prompt){
+  const key=document.getElementById('apiKey').value.trim();
+  const model=document.getElementById('model').value;
+  if(!key.startsWith('sk-ant-'))throw new Error('Invalid API key');
+  apiCalls++;
+  document.getElementById('apiDisp').textContent=apiCalls;
+  document.getElementById('apiCalls').textContent=apiCalls;
+
+  const res=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key':key,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body:JSON.stringify({
+      model,max_tokens:1024,
+      system:`You are NEXUS, an autonomous crypto trading AI making real decisions.
+CRITICAL: Respond ONLY with a single valid JSON object. No markdown. No explanation. No backticks. Just {}.`,
+      messages:[{role:'user',content:prompt}]
+    })
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
+  const d=await res.json();
+  const txt=d.content[0]?.text||'';
+  const m=txt.match(/\{[\s\S]*\}/);
+  if(!m)throw new Error('No JSON returned. Got: '+txt.slice(0,120));
+  return JSON.parse(m[0]);
+}
+
+// ── AGENT CYCLE ───────────────────────────────────────────────────────
+async function runCycle(){
+  if(!agentRunning)return;
+  cycle++;
+  document.getElementById('cycles').textContent=cycle;
+  document.getElementById('cycleDisp').textContent=cycle;
+  document.getElementById('lastAnalysis').textContent=new Date().toLocaleTimeString();
+  document.getElementById('lastRun').textContent=new Date().toLocaleTimeString();
+  setBadge('thinking','🧠 THINKING...');
+
+  const minConf=parseFloat(document.getElementById('minConf').value)||7;
+  const maxP=parseInt(document.getElementById('maxPos').value)||5;
+  const openN=Object.keys(portfolio.holdings).length;
+  const sl=parseFloat(document.getElementById('slPct').value)||3;
+  const tp=parseFloat(document.getElementById('tpPct').value)||8;
+
+  const top=Object.values(coins).sort((a,b)=>b.v-a.v).slice(0,12);
+  const mktData=top.map(c=>{
+    const r=rsi(c.hist),m=mom(c.hist),ch=chg1h(c);
+    return`${c.s}: price=$${fmt(c.p)} RSI=${r.toFixed(1)} mom=${m.toFixed(2)}% chg1h=${ch.toFixed(2)}% held=${!!portfolio.holdings[c.s]}`;
+  }).join('\n');
+
+  const holdCtx=Object.entries(portfolio.holdings).map(([s,h])=>{
+    const cur=coins[s]?.p||h.ep;
+    return`${s}: pnl=${((cur-h.ep)/h.ep*100).toFixed(1)}% entry=$${fmt(h.ep)} cur=$${fmt(cur)}`;
+  }).join('\n')||'None';
+
+  const prompt=`NEXUS CYCLE ${cycle} | ${new Date().toISOString()}
+PORTFOLIO: cash=$${portfolio.cash.toFixed(2)} | positions=${openN}/${maxP}
+HOLDINGS: ${holdCtx}
+
+MARKET (top 12 by volume):
+${mktData}
+
+RESPOND ONLY WITH THIS JSON (no text before or after):
+{
+  "market_read": "brief 1-sentence overall assessment",
+  "buy_signals": [
+    {"symbol":"XYZ","confidence":8.5,"reason":"RSI oversold, strong upward momentum","size_pct":20}
+  ],
+  "watch": ["SYMBOL1","SYMBOL2"],
+  "avoid_reason": "why avoiding others"
+}
+RULES: confidence >= ${minConf} to buy | skip symbols with held=true | max ${Math.max(0,maxP-openN)} new buys | size_pct = % of $${portfolio.cash.toFixed(2)} | empty buy_signals array if nothing qualifies`;
+
+  log(`🔍 Cycle ${cycle}: Scanning ${top.length} coins | Cash=$${portfolio.cash.toFixed(2)} | Open=${openN}/${maxP}`,'info');
+
+  try{
+    const dec=await callClaude(prompt);
+
+    if(dec.market_read)log(`🧠 "${dec.market_read}"`, 'reasoning');
+    if(dec.avoid_reason)log(`⚠️ ${dec.avoid_reason}`, 'risk');
+    if(dec.watch?.length)log(`👁 Watching: ${dec.watch.join(', ')}`,'info');
+
+    let bought=0;
+    if(Array.isArray(dec.buy_signals)){
+      for(const sig of dec.buy_signals){
+        if(!agentRunning)break;
+        if(sig.confidence<minConf){log(`⏭ ${sig.symbol}: conf ${sig.confidence}<${minConf}`,'info');continue;}
+        if(portfolio.holdings[sig.symbol]){log(`⏭ ${sig.symbol}: already held`,'info');continue;}
+        if(Object.keys(portfolio.holdings).length>=maxP){log(`⏭ Max positions reached`,'info');break;}
+        if(!coins[sig.symbol]){log(`⏭ ${sig.symbol}: not in universe`,'info');continue;}
+        const size=Math.min(sig.size_pct||20,40);
+        const amt=portfolio.cash*(size/100);
+        if(amt<10||portfolio.cash<amt){log(`⏭ ${sig.symbol}: insufficient cash`,'info');continue;}
+        const price=coins[sig.symbol].p;
+        const qty=amt/price;
+        portfolio.holdings[sig.symbol]={qty,ep:price,sl:price*(1-sl/100),tp:price*(1+tp/100)};
+        portfolio.cash-=amt;bought++;
+        log(`✅ BUY ${sig.symbol} @ $${fmt(price)} | Conf:${sig.confidence}/10 | $${amt.toFixed(0)} | SL:$${fmt(price*(1-sl/100))} TP:$${fmt(price*(1+tp/100))}`,'trade-buy');
+        log(`   └ ${sig.reason}`,'reasoning');
+      }
+    }
+    if(bought===0)log('⏸ No qualifying signals this cycle','info');
+    updateUI();
+    setBadge('running','✅ RUNNING');
+  }catch(err){
+    log(`❌ ${err.message}`,'error');
+    setBadge('running','✅ RUNNING');
+  }
+
+  if(agentRunning){
+    const iv=parseInt(document.getElementById('interval').value)||60000;
+    agentTimer=setTimeout(runCycle,iv);
+    log(`⏱ Next cycle in ${iv/1000}s`,'info');
+  }
+}
+
+// ── TICK LOOP (5s — price updates, always running) ────────────────────
+function tickLoop(){
+  tick();
+  checkExits();
+  updateChart();
+  updateTable();
+  updateUI();
+  setTimeout(tickLoop,5000);
+}
+
+// ── CONTROLS ──────────────────────────────────────────────────────────
+function startAgent(){
+  const k=document.getElementById('apiKey').value.trim();
+  if(!k.startsWith('sk-ant-')){log('❌ Invalid API key — must start with sk-ant-','error');return;}
+  agentRunning=true;
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('stopBtn').style.display='inline-block';
+  document.getElementById('agentMode').textContent='ACTIVE';
+  document.getElementById('agentMode').className='stat-value';
+  document.getElementById('modelDisp').textContent=document.getElementById('model').options[document.getElementById('model').selectedIndex].text;
+  log('🚀 NEXUS Agent started','success');
+  log(`⚙️ Model: ${document.getElementById('model').value} | MinConf: ${document.getElementById('minConf').value} | Interval: ${document.getElementById('interval').value/1000}s`,'info');
+  runCycle();
+}
+function stopAgent(){
+  agentRunning=false;
+  if(agentTimer)clearTimeout(agentTimer);
+  document.getElementById('startBtn').style.display='inline-block';
+  document.getElementById('stopBtn').style.display='none';
+  document.getElementById('agentMode').textContent='STOPPED';
+  document.getElementById('agentMode').className='stat-value red';
+  setBadge('stopped','⏹ STOPPED');
+  log('⏹ Agent stopped','info');
+}
+function resetAll(){
+  if(agentRunning)stopAgent();
+  portfolio={cash:10000,holdings:{},closed:[]};
+  peakVal=10000;cycle=0;apiCalls=0;timeLabels=[];
+  document.getElementById('cycles').textContent='0';
+  document.getElementById('cycleDisp').textContent='0';
+  document.getElementById('apiDisp').textContent='0';
+  document.getElementById('apiCalls').textContent='0';
+  document.getElementById('agentMode').textContent='INACTIVE';
+  document.getElementById('agentMode').className='stat-value';
+  document.getElementById('log').innerHTML='';
+  initCoins();updateUI();
+  log('↺ Reset complete. Portfolio restored to $10,000','info');
+}
+function setBadge(s,t){const e=document.getElementById('statusBadge');e.textContent=t;e.className=`status-badge status-${s}`;}
+function log(msg,type='info'){
+  const l=document.getElementById('log');
+  const e=document.createElement('div');
+  e.className=`log-entry ${type}`;
+  e.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+  l.appendChild(e);l.scrollTop=l.scrollHeight;
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────
+initCoins();updateUI();tickLoop();
+log('🤖 NEXUS ready. Enter your Anthropic API key and press START AGENT.','info');
+log('📡 Calls Anthropic API directly from browser — no server needed.','info');
+</script>
+</body>
+</html>
