@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS - Complete Agentic Trading System</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: linear-gradient(135deg, #0a0e27 0%, #141829 100%); color: #e4e6eb; font-family: 'Monaco', monospace; min-height: 100vh; }
+    .container { max-width: 1800px; margin: 0 auto; padding: 20px; }
+    header { text-align: center; padding: 30px; margin-bottom: 20px; background: rgba(168,85,247,0.15); border: 2px solid rgba(168,85,247,0.4); border-radius: 12px; }
+    h1 { font-size: 2.5em; color: #a855f7; margin-bottom: 8px; }
+    .subtitle { color: #a0a6b8; font-size: 13px; }
+    
+    .config-panel { background: rgba(26,31,58,0.85); border: 1px solid rgba(168,85,247,0.3); padding: 20px; border-radius: 10px; margin-bottom: 20px; }
+    .config-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 15px; }
+    .config-item { display: flex; flex-direction: column; gap: 5px; }
+    .config-label { font-size: 11px; color: #a855f7; text-transform: uppercase; font-weight: bold; }
+    input, select { padding: 10px; background: rgba(26,31,58,0.8); border: 1px solid rgba(168,85,247,0.3); color: #e4e6eb; border-radius: 6px; font-size: 12px; font-family: 'Monaco'; }
+    
+    .control-buttons { display: flex; gap: 10px; }
+    .btn { padding: 10px 20px; background: linear-gradient(135deg, #a855f7, #3b82f6); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; }
+    .btn:hover { box-shadow: 0 0 15px rgba(168,85,247,0.4); }
+    .btn-stop { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .btn-secondary { background: linear-gradient(135deg, #10b981, #059669); }
+    
+    .status-bar { display: flex; gap: 20px; margin-bottom: 20px; align-items: center; flex-wrap: wrap; }
+    .status-item { padding: 8px 16px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+    .status-running { background: rgba(59,130,246,0.2); color: #3b82f6; border: 1px solid #3b82f6; animation: pulse 2s infinite; }
+    .status-ready { background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+    
+    .panel { background: rgba(26,31,58,0.85); border: 1px solid rgba(168,85,247,0.2); border-radius: 10px; padding: 20px; }
+    .panel h2 { color: #a855f7; margin-bottom: 15px; font-size: 13px; text-transform: uppercase; border-bottom: 1px solid rgba(168,85,247,0.2); padding-bottom: 10px; }
+    
+    .stat { padding: 12px; background: rgba(26,31,58,0.7); border-left: 3px solid #10b981; border-radius: 6px; margin-bottom: 10px; }
+    .stat-label { font-size: 9px; color: #a0a6b8; margin-bottom: 4px; }
+    .stat-value { font-size: 18px; font-weight: bold; color: #10b981; }
+    .stat-value.negative { color: #ef4444; }
+    
+    .chart-container { position: relative; height: 300px; margin-bottom: 20px; }
+    
+    .trade-item { padding: 12px; background: rgba(26,31,58,0.7); border-left: 3px solid #3b82f6; border-radius: 6px; margin-bottom: 8px; font-size: 9px; }
+    .trade-item.buy { border-left-color: #10b981; }
+    .trade-item.sell { border-left-color: #ef4444; }
+    .trade-item.profit { background: rgba(16,185,129,0.1); }
+    .trade-item.loss { background: rgba(239,68,68,0.1); }
+    
+    .holding { padding: 12px; background: rgba(26,31,58,0.7); border-left: 3px solid #10b981; border-radius: 6px; margin-bottom: 8px; font-size: 9px; }
+    
+    .log { background: rgba(10,14,39,0.95); height: 350px; overflow-y: auto; border: 1px solid rgba(59,130,246,0.2); border-radius: 10px; padding: 12px; }
+    .log-entry { padding: 6px; margin-bottom: 4px; border-left: 2px solid #3b82f6; background: rgba(26,31,58,0.8); font-size: 8px; border-radius: 4px; line-height: 1.4; }
+    .log-entry.reasoning { border-left-color: #a855f7; color: #a855f7; }
+    .log-entry.trade { border-left-color: #10b981; color: #10b981; font-weight: bold; }
+    .log-entry.risk { border-left-color: #f59e0b; color: #f59e0b; }
+    .log-entry.error { border-left-color: #ef4444; color: #ef4444; }
+    
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(26,31,58,0.3); }
+    ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.5); border-radius: 3px; }
+    
+    .section-title { color: #a855f7; font-size: 12px; font-weight: bold; text-transform: uppercase; margin-top: 15px; margin-bottom: 10px; border-bottom: 1px solid rgba(168,85,247,0.2); padding-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🤖 NEXUS - COMPLETE AGENTIC TRADING SYSTEM</h1>
+      <p class="subtitle">Autonomous • Intelligent • Self-Learning • Full Details • Live Charts</p>
+    </header>
+
+    <div class="config-panel">
+      <div class="config-row">
+        <div class="config-item">
+          <label class="config-label">API Key</label>
+          <input type="password" id="apiKey" placeholder="sk-ant-xxxxx">
+        </div>
+        <div class="config-item">
+          <label class="config-label">Claude Model</label>
+          <select id="model">
+            <option value="claude-opus-4-20250514">Opus 4</option>
+            <option value="claude-sonnet-4-20250514" selected>Sonnet 4</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+          </select>
+        </div>
+        <div class="config-item">
+          <label class="config-label">Mode</label>
+          <select id="mode">
+            <option value="demo" selected>📊 Demo (Simulation)</option>
+            <option value="real">🔴 Real (API Only)</option>
+          </select>
+        </div>
+        <div class="config-item">
+          <label class="config-label">Min Confidence</label>
+          <input type="number" id="minConfidence" value="7" min="5" max="10">
+        </div>
+      </div>
+      <div class="config-row">
+        <div class="config-item">
+          <label class="config-label">Max Positions</label>
+          <input type="number" id="maxPositions" value="5" min="2" max="10">
+        </div>
+        <div class="config-item">
+          <label class="config-label">Risk %</label>
+          <input type="number" id="riskPercent" value="20" min="5" max="40">
+        </div>
+      </div>
+      <div class="control-buttons">
+        <button class="btn" id="startBtn" onclick="startAgent()">▶️ START AGENT</button>
+        <button class="btn btn-stop" id="stopBtn" onclick="stopAgent()" style="display: none;">⏹️ STOP AGENT</button>
+        <button class="btn btn-secondary" id="resetBtn" onclick="resetPortfolio()">🔄 RESET</button>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-item status-ready" id="status">⏳ Ready</div>
+      <div style="font-size: 11px; color: #a0a6b8;">
+        Model: <span id="modelDisplay">Sonnet 4</span> | Mode: <span id="modeDisplay">Demo</span>
+      </div>
+    </div>
+
+    <div class="grid-4">
+      <div class="panel">
+        <h2>💰 Portfolio</h2>
+        <div class="stat">
+          <div class="stat-label">Total Value</div>
+          <div class="stat-value" id="totalValue">$10,000</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Cash</div>
+          <div class="stat-value" id="cash">$10,000</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L</div>
+          <div class="stat-value" id="pnl" style="color: #10b981;">+$0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Positions</div>
+          <div class="stat-value" id="positions">0/5</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>📊 Trading Stats</h2>
+        <div class="stat">
+          <div class="stat-label">Total Trades</div>
+          <div class="stat-value" id="trades">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Win Rate</div>
+          <div class="stat-value" id="winRate">0%</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Total Profit</div>
+          <div class="stat-value" id="totalProfit">$0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Total Loss</div>
+          <div class="stat-value" id="totalLoss">$0</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>🎯 Risk Metrics</h2>
+        <div class="stat">
+          <div class="stat-label">Max Drawdown</div>
+          <div class="stat-value" id="maxDrawdown">0%</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Risk Level</div>
+          <div class="stat-value" id="riskLevel">LOW</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Concentration</div>
+          <div class="stat-value" id="concentration">0%</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Diversification</div>
+          <div class="stat-value" id="diversification">0</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>🤖 Agent Status</h2>
+        <div class="stat">
+          <div class="stat-label">Reasoning Cycles</div>
+          <div class="stat-value" id="cycles">0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Active Mode</div>
+          <div class="stat-value" id="agentMode">INACTIVE</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Last Analysis</div>
+          <div class="stat-value" style="font-size: 10px;" id="lastAnalysis">--:--:--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">API Calls</div>
+          <div class="stat-value" id="apiCalls">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top: 20px;">
+      <div class="panel">
+        <h2>📈 Price Chart (Live)</h2>
+        <div class="chart-container">
+          <canvas id="priceChart"></canvas>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>💎 Current Holdings</h2>
+        <div id="holdings" style="max-height: 400px; overflow-y: auto;">
+          <div style="color:#a0a6b8;font-size:10px;">No positions</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top: 20px;">
+      <div class="panel">
+        <h2>📝 Trade History (Last 20)</h2>
+        <div id="tradeHistory" style="max-height: 400px; overflow-y: auto;">
+          <div style="color:#a0a6b8;font-size:10px;">No trades yet</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>🧠 Agentic Reasoning Log</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <script>
+    let agentRunning = false;
+    let reasoningCycle = 0;
+    let priceChart = null;
+    let priceHistory = [];
+    let tradeHistory = [];
+
+    const TOP50_COINS = [
+      'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'POLKADOT', 'LINK', 'MATIC',
+      'LTC', 'BCH', 'XLM', 'ATOM', 'UNI', 'AVAX', 'NEAR', 'VET', 'ALGO', 'ICP',
+      'HBAR', 'FIL', 'THETA', 'TRX', 'AAVE', 'XMR', 'ETC', 'SAND', 'MANA', 'FLOW',
+      'GALA', 'AXIE', 'ENS', 'LUNC', 'LUNA2', 'APT', 'ARB', 'OP', 'BLUR', 'PEPE',
+      'DYDX', 'GMT', 'MAGIC', 'LOOKS', 'STX', 'BONK', 'JUP', 'WIF', 'SHIB', 'RENDER'
+    ];
+
+    let coins = {};
+    let portfolio = {
+      cash: 10000,
+      holdings: {},
+      trades: [],
+      totalValue: 10000,
+      pnl: 0
+    };
+
+    function initializeCoins() {
+      TOP50_COINS.forEach((symbol, index) => {
+        coins[symbol] = {
+          symbol,
+          price: 50000 / Math.pow(index + 1, 0.65),
+          basePrice: 50000 / Math.pow(index + 1, 0.65),
+          vol: 5 + Math.random() * 15,
+          rank: index + 1,
+          history: []
+        };
+      });
+    }
+
+    function updatePrices() {
+      Object.values(coins).forEach(c => {
+        const change = (Math.random() - 0.5) * 0.08;
+        c.price *= (1 + change);
+        c.history.push(c.price);
+        if (c.history.length > 50) c.history.shift();
+      });
+      
+      priceHistory.push(new Date().toLocaleTimeString());
+      if (priceHistory.length > 50) priceHistory.shift();
+      
+      updateChart();
+    }
+
+    function updateChart() {
+      const topCoins = Object.values(coins).sort((a, b) => b.vol - a.vol).slice(0, 5);
+      
+      if (!priceChart) {
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        priceChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: priceHistory,
+            datasets: topCoins.map((c, i) => ({
+              label: c.symbol,
+              data: c.history,
+              borderColor: ['#a855f7', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'][i],
+              borderWidth: 2,
+              tension: 0.3,
+              fill: false
+            }))
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#a0a6b8', font: { size: 9 } } } },
+            scales: {
+              y: { ticks: { color: '#a0a6b8', font: { size: 8 } }, grid: { color: 'rgba(168,85,247,0.1)' } },
+              x: { ticks: { color: '#a0a6b8', font: { size: 8 } }, grid: { color: 'rgba(168,85,247,0.1)' } }
+            }
+          }
+        });
+      } else {
+        priceChart.data.labels = priceHistory;
+        priceChart.data.datasets.forEach((ds, i) => {
+          ds.data = topCoins[i]?.history || [];
+        });
+        priceChart.update();
+      }
+    }
+
+    function log(msg, type = 'reasoning') {
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function updateTradeHistory() {
+      const historyEl = document.getElementById('tradeHistory');
+      historyEl.innerHTML = tradeHistory.slice(-20).reverse().map(t => `
+        <div class="trade-item ${t.type} ${t.pnl >= 0 ? 'profit' : 'loss'}">
+          <strong>${t.symbol}</strong> | ${t.type.toUpperCase()} @ $${t.price.toFixed(4)} | 
+          <span style="color: ${t.pnl >= 0 ? '#10b981' : '#ef4444'}">
+            ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}
+          </span><br>
+          Entry: $${t.entry.toFixed(4)} | Exit: $${t.exit.toFixed(4)} | SL: $${t.stopLoss.toFixed(4)} | TP: $${t.profitTarget.toFixed(4)}
+        </div>
+      `).join('') || '<div style="color:#a0a6b8;font-size:10px;">No trades</div>';
+    }
+
+    function updateUI() {
+      const totalValue = portfolio.cash + Object.entries(portfolio.holdings).reduce((sum, [sym, h]) => {
+        return sum + (h.shares * coins[sym].price);
+      }, 0);
+      
+      portfolio.totalValue = totalValue;
+      portfolio.pnl = totalValue - 10000;
+
+      document.getElementById('totalValue').textContent = `$${totalValue.toFixed(2)}`;
+      document.getElementById('cash').textContent = `$${portfolio.cash.toFixed(2)}`;
+      document.getElementById('pnl').textContent = `${portfolio.pnl >= 0 ? '+' : ''}$${portfolio.pnl.toFixed(2)}`;
+      document.getElementById('pnl').className = `stat-value ${portfolio.pnl < 0 ? 'negative' : ''}`;
+      document.getElementById('positions').textContent = `${Object.keys(portfolio.holdings).length}/5`;
+      document.getElementById('trades').textContent = portfolio.trades.length;
+
+      const wins = portfolio.trades.filter(t => t.pnl > 0).length;
+      const winRate = portfolio.trades.length > 0 ? ((wins / portfolio.trades.length) * 100).toFixed(1) : 0;
+      document.getElementById('winRate').textContent = `${winRate}%`;
+
+      const profit = portfolio.trades.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
+      const loss = portfolio.trades.filter(t => t.pnl < 0).reduce((s, t) => s + t.pnl, 0);
+      document.getElementById('totalProfit').textContent = `$${profit.toFixed(2)}`;
+      document.getElementById('totalLoss').textContent = `$${loss.toFixed(2)}`;
+
+      const holdingsEl = document.getElementById('holdings');
+      if (Object.keys(portfolio.holdings).length === 0) {
+        holdingsEl.innerHTML = '<div style="color:#a0a6b8;font-size:10px;">No positions</div>';
+      } else {
+        holdingsEl.innerHTML = Object.entries(portfolio.holdings).map(([sym, h]) => {
+          const current = coins[sym].price;
+          const pnl = (current - h.entryPrice) * h.shares;
+          const pct = ((current - h.entryPrice) / h.entryPrice * 100).toFixed(2);
+          return `<div class="holding">
+            <strong>${sym}</strong><br>
+            Entry: $${h.entryPrice.toFixed(4)} | Current: $${current.toFixed(4)}<br>
+            SL: $${h.stopLoss.toFixed(4)} | TP: $${h.profitTarget.toFixed(4)}<br>
+            Shares: ${h.shares.toFixed(4)} | P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pct}%)
+          </div>`;
+        }).join('');
+      }
+
+      updateTradeHistory();
+    }
+
+    async function startAgent() {
+      const apiKey = document.getElementById('apiKey').value.trim();
+      if (!apiKey.startsWith('sk-ant-')) {
+        log('❌ Invalid API key', 'error');
+        return;
+      }
+
+      agentRunning = true;
+      document.getElementById('status').className = 'status-item status-running';
+      document.getElementById('status').textContent = '✅ RUNNING';
+      document.getElementById('startBtn').style.display = 'none';
+      document.getElementById('stopBtn').style.display = 'block';
+      document.getElementById('agentMode').textContent = 'ACTIVE';
+      document.getElementById('modelDisplay').textContent = document.getElementById('model').value.split('/')[1];
+      document.getElementById('modeDisplay').textContent = document.getElementById('mode').value === 'demo' ? 'Demo' : 'Real';
+
+      log('🚀 NEXUS Agent Started', 'reasoning');
+      log('🧠 Initializing autonomous reasoning engine...', 'reasoning');
+      log(`📊 Mode: ${document.getElementById('mode').value.toUpperCase()} | Model: ${document.getElementById('model').value}`, 'reasoning');
+
+      agentLoop();
+    }
+
+    function stopAgent() {
+      agentRunning = false;
+      document.getElementById('status').className = 'status-item status-ready';
+      document.getElementById('status').textContent = '⏹️ STOPPED';
+      document.getElementById('startBtn').style.display = 'block';
+      document.getElementById('stopBtn').style.display = 'none';
+      document.getElementById('agentMode').textContent = 'INACTIVE';
+      log('⏹️ Agent stopped', 'reasoning');
+    }
+
+    function resetPortfolio() {
+      portfolio = { cash: 10000, holdings: {}, trades: [], totalValue: 10000, pnl: 0 };
+      tradeHistory = [];
+      priceHistory = [];
+      reasoningCycle = 0;
+      document.getElementById('cycles').textContent = '0';
+      updateUI();
+      log('🔄 Portfolio reset', 'reasoning');
+    }
+
+    async function agentLoop() {
+      if (!agentRunning) return;
+
+      updatePrices();
+      reasoningCycle++;
+      document.getElementById('cycles').textContent = reasoningCycle;
+      document.getElementById('lastAnalysis').textContent = new Date().toLocaleTimeString();
+
+      const ranked = Object.values(coins).sort((a, b) => b.vol - a.vol).slice(0, 10);
+      log(`🔍 PERCEIVE: Analyzing ${ranked.map(c => c.symbol).join(', ')}...`, 'reasoning');
+
+      try {
+        await fetch('/api/agent/cycle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ coins: ranked })
+        }).then(r => r.json()).then(data => {
+          if (data.trades) {
+            data.trades.forEach(t => {
+              tradeHistory.push(t);
+              portfolio.trades.push(t);
+              log(`📊 ${t.type.toUpperCase()}: ${t.symbol} @ $${t.price.toFixed(4)} | Entry: $${t.entry.toFixed(4)} | SL: $${t.stopLoss.toFixed(4)} | TP: $${t.profitTarget.toFixed(4)}`, t.type === 'buy' ? 'trade' : 'trade');
+            });
+          }
+          if (data.exits) {
+            data.exits.forEach(e => {
+              log(`🔚 EXIT: ${e.symbol} @ $${e.exitPrice.toFixed(4)} | Reason: ${e.reason} | P&L: ${e.pnl >= 0 ? '+' : ''}$${e.pnl.toFixed(2)}`, e.pnl >= 0 ? 'trade' : 'risk');
+            });
+          }
+          updateUI();
+        });
+      } catch (error) {
+        log(`❌ Error: ${error.message}`, 'error');
+      }
+
+      if (agentRunning) {
+        setTimeout(agentLoop, 60000);
+      }
+    }
+
+    initializeCoins();
+    updatePrices();
+    updateUI();
+  </script>
+</body>
+</html>
