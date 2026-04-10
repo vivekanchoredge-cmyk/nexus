@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS - Autonomous Trading Agent</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: linear-gradient(135deg, #0a0e27 0%, #141829 100%); color: #e4e6eb; font-family: 'Monaco', monospace; overflow-x: hidden; }
+    .container { max-width: 1800px; margin: 0 auto; padding: 20px; }
+    header { text-align: center; padding: 30px; margin-bottom: 20px; background: rgba(168,85,247,0.15); border: 2px solid rgba(168,85,247,0.4); border-radius: 12px; }
+    h1 { font-size: 2.8em; color: #a855f7; margin-bottom: 8px; text-shadow: 0 0 20px rgba(168,85,247,0.3); }
+    .subtitle { color: #a0a6b8; font-size: 14px; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    .panel { background: rgba(26,31,58,0.85); border: 1px solid rgba(168,85,247,0.2); border-radius: 10px; padding: 20px; }
+    .panel h2 { color: #a855f7; margin-bottom: 15px; font-size: 16px; text-transform: uppercase; }
+    .stat { padding: 15px; background: rgba(26,31,58,0.7); border-left: 3px solid #10b981; border-radius: 6px; margin-bottom: 12px; }
+    .stat-label { font-size: 10px; color: #a0a6b8; text-transform: uppercase; margin-bottom: 6px; }
+    .stat-value { font-size: 20px; font-weight: bold; color: #10b981; }
+    .log { background: rgba(10,14,39,0.95); border: 1px solid rgba(59,130,246,0.2); border-radius: 10px; padding: 15px; height: 400px; overflow-y: auto; margin-top: 15px; }
+    .log-entry { padding: 10px; margin-bottom: 8px; border-left: 3px solid #3b82f6; background: rgba(26,31,58,0.8); font-size: 11px; line-height: 1.6; }
+    .log-entry.buy { border-left-color: #10b981; background: rgba(16,185,129,0.1); }
+    .log-entry.sell { border-left-color: #ef4444; background: rgba(239,68,68,0.1); }
+    .log-entry.analyze { border-left-color: #f59e0b; background: rgba(245,158,11,0.1); }
+    .coin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 15px; }
+    .coin-card { padding: 12px; background: rgba(26,31,58,0.7); border: 1px solid rgba(168,85,247,0.2); border-radius: 6px; }
+    .coin-name { font-weight: bold; color: #a855f7; margin-bottom: 4px; }
+    .coin-price { font-size: 12px; color: #10b981; }
+    .coin-score { font-size: 10px; color: #f59e0b; margin-top: 4px; }
+    .controls { display: flex; gap: 10px; margin-top: 15px; flex-wrap: wrap; }
+    .btn { padding: 10px 20px; background: linear-gradient(135deg, #a855f7, #3b82f6); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: all 0.3s; }
+    .btn:hover { box-shadow: 0 0 15px rgba(168,85,247,0.4); transform: translateY(-2px); }
+    .btn:active { transform: scale(0.98); }
+    .btn-danger { background: linear-gradient(135deg, #ef4444, #dc2626); }
+    .status { padding: 12px; border-radius: 6px; background: rgba(16,185,129,0.15); border-left: 3px solid #10b981; margin-bottom: 15px; font-size: 12px; }
+    .status.active { border-left-color: #10b981; }
+    .status.inactive { border-left-color: #ef4444; background: rgba(239,68,68,0.15); }
+    .holdings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 15px; }
+    .holding-card { padding: 12px; background: rgba(26,31,58,0.7); border-left: 3px solid #10b981; border-radius: 6px; }
+    .holding-symbol { font-weight: bold; color: #a855f7; margin-bottom: 6px; }
+    .holding-detail { font-size: 11px; color: #a0a6b8; margin-bottom: 3px; }
+    .holding-pnl { font-size: 12px; font-weight: bold; margin-top: 6px; }
+    .pnl-positive { color: #10b981; }
+    .pnl-negative { color: #ef4444; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(26,31,58,0.3); }
+    ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.5); border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🤖 NEXUS AUTONOMOUS TRADING AGENT</h1>
+      <p class="subtitle">Real-time Auto Trading • Stop Loss Management • Autonomous Decision Making</p>
+    </header>
+
+    <div class="layout">
+      <!-- LEFT PANEL: PORTFOLIO -->
+      <div class="panel">
+        <h2>📊 Portfolio</h2>
+        <div class="stat">
+          <div class="stat-label">Total Value</div>
+          <div class="stat-value" id="totalValue">$10,000</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Available Cash</div>
+          <div class="stat-value" id="cash">$10,000</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">P&L</div>
+          <div class="stat-value" id="pl" style="color: #10b981;">+$0</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Trades Executed</div>
+          <div class="stat-value" id="trades">0</div>
+        </div>
+        <div style="margin-top: 20px;">
+          <h3 style="color: #a855f7; font-size: 12px; margin-bottom: 10px; text-transform: uppercase;">Holdings</h3>
+          <div class="holdings-grid" id="holdings"></div>
+        </div>
+      </div>
+
+      <!-- CENTER PANEL: AGENT LOG -->
+      <div class="panel">
+        <h2>📋 Agent Activity Log</h2>
+        <div class="status active" id="status">
+          🟢 AGENT ACTIVE - Autonomous trading in progress
+        </div>
+        <div class="log" id="log">
+          <div class="log-entry analyze">🔍 Agent initialized - Starting autonomous trading mode</div>
+          <div class="log-entry">⏳ Waiting for market analysis...</div>
+        </div>
+      </div>
+
+      <!-- RIGHT PANEL: MARKET & ANALYSIS -->
+      <div class="panel">
+        <h2>📈 Market Analysis</h2>
+        <div style="margin-top: 15px;">
+          <h3 style="color: #a855f7; font-size: 12px; margin-bottom: 10px; text-transform: uppercase;">Coin Scores</h3>
+          <div class="coin-grid" id="coinGrid"></div>
+        </div>
+        <div class="controls">
+          <button class="btn" onclick="toggleAgent()">Pause Agent</button>
+          <button class="btn btn-danger" onclick="resetPortfolio()">Reset Portfolio</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ═════════════════════════════════════════════════════════════════
+    // AUTONOMOUS AGENT - RUNS WITHOUT USER COMMANDS
+    // ═════════════════════════════════════════════════════════════════
+
+    let agentState = {
+      running: true,
+      mode: 'demo',
+      portfolio: 10000,
+      cash: 10000,
+      holdings: {},
+      trades: 0,
+      tradeHistory: [],
+      openOrders: {}
+    };
+
+    const COINS = {
+      BTC: { price: 45123, change: 8.5, volatility: 2.1, name: 'Bitcoin' },
+      ETH: { price: 2850, change: 6.3, volatility: 2.8, name: 'Ethereum' },
+      SOL: { price: 102, change: 9.1, volatility: 3.2, name: 'Solana' },
+      ADA: { price: 0.98, change: 7.2, volatility: 2.5, name: 'Cardano' },
+      XRP: { price: 0.52, change: 10.4, volatility: 2.9, name: 'Ripple' }
+    };
+
+    function log(message, type = 'default') {
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function analyzeCoin(symbol) {
+      const coin = COINS[symbol];
+      let score = 0;
+      
+      if (coin.change > 8) score += 30;
+      else if (coin.change > 5) score += 20;
+      else if (coin.change > 0) score += 10;
+      
+      score += Math.max(0, 30 - coin.volatility * 5);
+      score += 20;
+      
+      return Math.min(100, score);
+    }
+
+    function getTopCoins() {
+      return Object.keys(COINS)
+        .map(sym => ({ symbol: sym, score: analyzeCoin(sym) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
+    }
+
+    function shouldBuy(symbol) {
+      const score = analyzeCoin(symbol);
+      const coin = COINS[symbol];
+      const alreadyOwned = symbol in agentState.holdings;
+      
+      return score > 65 && !alreadyOwned && agentState.cash > coin.price * 2;
+    }
+
+    function shouldSell(symbol) {
+      if (!agentState.holdings[symbol]) return false;
+      
+      const holding = agentState.holdings[symbol];
+      const coin = COINS[symbol];
+      const currentValue = holding.shares * coin.price;
+      const profit = currentValue - holding.invested;
+      const profitPercent = (profit / holding.invested) * 100;
+      
+      // Sell at +5% or -3%
+      return profitPercent > 5 || profitPercent < -3;
+    }
+
+    function executeBuy(symbol) {
+      const coin = COINS[symbol];
+      const amount = Math.min(agentState.cash * 0.4, agentState.portfolio * 0.2);
+      
+      if (amount < coin.price) return false;
+      
+      const shares = amount / coin.price;
+      agentState.holdings[symbol] = {
+        shares,
+        entryPrice: coin.price,
+        invested: amount,
+        stopLoss: coin.price * 0.97,
+        profitTarget: coin.price * 1.05
+      };
+      
+      agentState.cash -= amount;
+      agentState.trades++;
+      
+      log(`✅ BUY: ${shares.toFixed(4)} ${symbol} at $${coin.price} | Invested: $${amount.toFixed(2)}`, 'buy');
+      return true;
+    }
+
+    function executeSell(symbol) {
+      const holding = agentState.holdings[symbol];
+      const coin = COINS[symbol];
+      const saleAmount = holding.shares * coin.price;
+      const profit = saleAmount - holding.invested;
+      const profitPercent = (profit / holding.invested) * 100;
+      
+      agentState.cash += saleAmount;
+      delete agentState.holdings[symbol];
+      agentState.trades++;
+      
+      log(`✅ SELL: ${holding.shares.toFixed(4)} ${symbol} at $${coin.price} | P&L: ${profitPercent > 0 ? '+' : ''}$${profit.toFixed(2)} (${profitPercent.toFixed(2)}%)`, 'sell');
+      return true;
+    }
+
+    function autonomousLoop() {
+      if (!agentState.running) return;
+      
+      log(`🔄 Analyzing market...`, 'analyze');
+      
+      // Check existing positions for stop loss / profit target
+      for (const [symbol, holding] of Object.entries(agentState.holdings)) {
+        const coin = COINS[symbol];
+        const currentPrice = coin.price;
+        
+        // Stop loss check
+        if (currentPrice <= holding.stopLoss) {
+          log(`⚠️ STOP LOSS triggered for ${symbol}`, 'sell');
+          executeSell(symbol);
+          continue;
+        }
+        
+        // Profit target check
+        if (currentPrice >= holding.profitTarget) {
+          log(`🎯 PROFIT TARGET reached for ${symbol}`, 'sell');
+          executeSell(symbol);
+          continue;
+        }
+        
+        // Check if should sell by score
+        if (shouldSell(symbol)) {
+          executeSell(symbol);
+        }
+      }
+      
+      // Look for buy opportunities
+      const topCoins = getTopCoins();
+      topCoins.forEach(({ symbol, score }) => {
+        if (shouldBuy(symbol)) {
+          executeBuy(symbol);
+        }
+      });
+      
+      updateUI();
+    }
+
+    function updateUI() {
+      // Update portfolio stats
+      const totalValue = agentState.cash + Object.entries(agentState.holdings).reduce((a, [sym, h]) => a + h.shares * COINS[sym].price, 0);
+      const pl = totalValue - 10000;
+      
+      document.getElementById('totalValue').textContent = `$${totalValue.toFixed(2)}`;
+      document.getElementById('cash').textContent = `$${agentState.cash.toFixed(2)}`;
+      document.getElementById('pl').textContent = (pl >= 0 ? '+' : '') + `$${pl.toFixed(2)}`;
+      document.getElementById('pl').style.color = pl >= 0 ? '#10b981' : '#ef4444';
+      document.getElementById('trades').textContent = agentState.trades;
+      
+      // Update holdings
+      const holdingsEl = document.getElementById('holdings');
+      holdingsEl.innerHTML = '';
+      Object.entries(agentState.holdings).forEach(([symbol, holding]) => {
+        const coin = COINS[symbol];
+        const value = holding.shares * coin.price;
+        const pnl = value - holding.invested;
+        const pnlPercent = (pnl / holding.invested) * 100;
+        
+        const card = document.createElement('div');
+        card.className = 'holding-card';
+        card.innerHTML = `
+          <div class="holding-symbol">${symbol}</div>
+          <div class="holding-detail">Shares: ${holding.shares.toFixed(4)}</div>
+          <div class="holding-detail">Entry: $${holding.entryPrice}</div>
+          <div class="holding-detail">Current: $${coin.price}</div>
+          <div class="holding-pnl ${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+            ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(1)}%)
+          </div>
+        `;
+        holdingsEl.appendChild(card);
+      });
+      
+      // Update coin grid
+      const gridEl = document.getElementById('coinGrid');
+      gridEl.innerHTML = '';
+      Object.entries(COINS).forEach(([symbol, coin]) => {
+        const score = analyzeCoin(symbol);
+        const card = document.createElement('div');
+        card.className = 'coin-card';
+        card.innerHTML = `
+          <div class="coin-name">${symbol}</div>
+          <div class="coin-price">$${coin.price}</div>
+          <div class="coin-score">Score: ${score}</div>
+        `;
+        gridEl.appendChild(card);
+      });
+    }
+
+    function toggleAgent() {
+      agentState.running = !agentState.running;
+      const status = document.getElementById('status');
+      if (agentState.running) {
+        status.className = 'status active';
+        status.textContent = '🟢 AGENT ACTIVE - Autonomous trading in progress';
+        log('▶️ Agent resumed', 'analyze');
+      } else {
+        status.className = 'status inactive';
+        status.textContent = '🔴 AGENT PAUSED';
+        log('⏸️ Agent paused', 'analyze');
+      }
+    }
+
+    function resetPortfolio() {
+      if (confirm('Reset portfolio to $10,000?')) {
+        agentState = {
+          running: agentState.running,
+          mode: 'demo',
+          portfolio: 10000,
+          cash: 10000,
+          holdings: {},
+          trades: 0,
+          tradeHistory: [],
+          openOrders: {}
+        };
+        log('♻️ Portfolio reset to $10,000', 'analyze');
+        updateUI();
+      }
+    }
+
+    // Start autonomous loop
+    updateUI();
+    setInterval(autonomousLoop, 5000); // Run every 5 seconds
+    log('🚀 NEXUS Autonomous Agent Started', 'analyze');
+  </script>
+</body>
+</html>
