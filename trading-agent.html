@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS Trading Agent - Complete Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root { --bg1: #0a0e27; --bg2: #141829; --bg3: #1a1f3a; --t1: #e4e6eb; --t2: #a0a6b8; --green: #10b981; --red: #ef4444; --blue: #3b82f6; --purple: #a855f7; }
+    body { background: linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 100%); color: var(--t1); font-family: 'Monaco', 'Courier New', monospace; line-height: 1.6; }
+    .container { max-width: 1600px; margin: 0 auto; padding: 20px; }
+    header { text-align: center; margin-bottom: 30px; padding: 30px 20px; background: linear-gradient(135deg, rgba(168,85,247,0.2), rgba(59,130,246,0.2)); border: 2px solid rgba(168, 85, 247, 0.4); border-radius: 15px; }
+    h1 { font-size: 3em; color: var(--purple); margin-bottom: 8px; text-shadow: 0 0 20px rgba(168,85,247,0.5); }
+    .subtitle { color: var(--t2); font-size: 14px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat { padding: 15px; background: rgba(26,31,58,0.8); border: 1px solid rgba(59,130,246,0.3); border-radius: 8px; }
+    .stat-label { font-size: 10px; color: var(--t2); text-transform: uppercase; margin-bottom: 8px; }
+    .stat-value { font-size: 22px; font-weight: bold; }
+    .stat-value.profit { color: var(--green); }
+    .stat-value.loss { color: var(--red); }
+    .main { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 1200px) { .main { grid-template-columns: 1fr; } }
+    .panel { background: linear-gradient(135deg, rgba(26,31,58,0.8), rgba(26,31,58,0.5)); border: 1px solid rgba(168,85,247,0.2); border-radius: 10px; padding: 20px; }
+    .panel-title { font-size: 13px; font-weight: bold; color: var(--purple); text-transform: uppercase; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid rgba(168,85,247,0.3); }
+    .coin-row { display: grid; grid-template-columns: 40px 1fr 70px 70px 70px; gap: 10px; align-items: center; padding: 10px; background: rgba(26,31,58,0.6); border-radius: 6px; margin-bottom: 8px; border-left: 3px solid transparent; }
+    .coin-row.hot { border-left-color: var(--green); background: rgba(16,185,129,0.1); }
+    .coin-row:hover { background: rgba(59,130,246,0.15); }
+    .coin-rank { font-weight: bold; color: var(--blue); text-align: center; font-size: 11px; }
+    .coin-symbol { font-weight: bold; font-size: 12px; }
+    .coin-price { text-align: right; font-size: 11px; color: var(--t2); }
+    .coin-change { text-align: right; font-size: 11px; font-weight: bold; }
+    .coin-change.up { color: var(--green); }
+    .coin-change.down { color: var(--red); }
+    .coin-score { text-align: right; font-size: 10px; font-weight: bold; background: rgba(168,85,247,0.25); padding: 4px 8px; border-radius: 4px; }
+    .log { max-height: 500px; overflow-y: auto; border: 1px solid rgba(59,130,246,0.2); border-radius: 8px; padding: 12px; background: rgba(10,14,39,0.7); }
+    .log-entry { padding: 10px; margin-bottom: 8px; background: rgba(26,31,58,0.8); border-left: 3px solid var(--blue); border-radius: 4px; font-size: 11px; line-height: 1.5; }
+    .log-entry.buy { border-left-color: var(--green); }
+    .log-entry.sell { border-left-color: var(--red); }
+    .log-entry.success { border-left-color: var(--green); }
+    .log-entry.error { border-left-color: var(--red); }
+    .log-time { color: var(--t2); font-size: 9px; margin-bottom: 3px; }
+    .buttons { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+    button { padding: 14px 28px; border: none; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.3s; }
+    .btn-primary { background: linear-gradient(135deg, var(--purple), var(--blue)); color: white; box-shadow: 0 4px 15px rgba(168,85,247,0.4); }
+    .btn-primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(168,85,247,0.6); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: rgba(168,85,247,0.15); color: var(--purple); border: 1px solid rgba(168,85,247,0.4); }
+    .btn-secondary:hover { background: rgba(168,85,247,0.25); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(26,31,58,0.3); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgba(168,85,247,0.5); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(168,85,247,0.8); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🤖 NEXUS TRADING AGENT</h1>
+      <div class="subtitle">AI-Powered Demo • Crypto Trading Simulator • Live Dashboard</div>
+    </header>
+    
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Portfolio</div>
+        <div class="stat-value" id="portfolio">$10,000</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">P&L</div>
+        <div class="stat-value profit" id="pl">+$0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">ROI</div>
+        <div class="stat-value" id="roi">0%</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Trades</div>
+        <div class="stat-value" id="trades">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value" id="winrate">0%</div>
+      </div>
+    </div>
+    
+    <div class="main">
+      <div>
+        <div class="panel">
+          <div class="panel-title">📊 Top Coins Ranked by Score</div>
+          <div id="coins"></div>
+        </div>
+      </div>
+      <div>
+        <div class="panel">
+          <div class="panel-title">💼 Holdings</div>
+          <div id="holdings"></div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="panel">
+      <div class="panel-title">📈 Live Trade Log</div>
+      <div class="log" id="log"></div>
+    </div>
+    
+    <div class="buttons">
+      <button class="btn-primary" id="startBtn" onclick="startTrading()">🚀 START TRADING</button>
+      <button class="btn-secondary" onclick="resetAll()">RESET</button>
+    </div>
+  </div>
+
+  <script>
+    const COINS = [
+      { id: 'bitcoin', symbol: 'BTC', price: 45123, change: 4.2, mcap: 880e9, vol: 25e9 },
+      { id: 'ethereum', symbol: 'ETH', price: 2850, change: -1.3, mcap: 342e9, vol: 12e9 },
+      { id: 'solana', symbol: 'SOL', price: 102, change: 6.1, mcap: 47e9, vol: 2.5e9 },
+      { id: 'cardano', symbol: 'ADA', price: 0.98, change: 3.2, mcap: 35e9, vol: 1.8e9 },
+      { id: 'avalanche', symbol: 'AVAX', price: 35, change: 2.8, mcap: 12e9, vol: 0.8e9 },
+      { id: 'ripple', symbol: 'XRP', price: 0.52, change: 5.4, mcap: 28e9, vol: 1.5e9 },
+      { id: 'polkadot', symbol: 'DOT', price: 7.45, change: 1.9, mcap: 10e9, vol: 0.6e9 },
+      { id: 'litecoin', symbol: 'LTC', price: 550, change: -0.5, mcap: 7.5e9, vol: 0.5e9 },
+    ];
+
+    const state = {
+      cash: 10000,
+      initial: 10000,
+      holdings: {},
+      trades: 0,
+      wins: 0,
+      isTrading: false,
+    };
+
+    function score(coin) {
+      let s = 0;
+      if (coin.change > 5) s += 20;
+      else if (coin.change > 0) s += 10;
+      const ratio = coin.vol / coin.mcap;
+      if (ratio > 0.5) s += 25;
+      else if (ratio > 0.2) s += 15;
+      if (coin.mcap > 1e9) s += 25;
+      else if (coin.mcap > 100e6) s += 15;
+      if (Math.abs(coin.change) < 15) s += 20;
+      return Math.min(100, Math.round(s));
+    }
+
+    function show() {
+      const ranked = COINS.map(c => ({ ...c, score: score(c) })).sort((a, b) => b.score - a.score);
+      document.getElementById('coins').innerHTML = ranked.map(c => `
+        <div class="coin-row ${c.score > 70 ? 'hot' : ''}">
+          <div class="coin-rank">#${COINS.indexOf(COINS.find(x => x.id === c.id)) + 1}</div>
+          <div class="coin-symbol">${c.symbol}</div>
+          <div class="coin-price">$${c.price.toFixed(2)}</div>
+          <div class="coin-change ${c.change >= 0 ? 'up' : 'down'}">${c.change >= 0 ? '↑' : '↓'} ${Math.abs(c.change).toFixed(1)}%</div>
+          <div class="coin-score">${c.score}</div>
+        </div>
+      `).join('');
+      
+      document.getElementById('holdings').innerHTML = Object.entries(state.holdings).map(([id, h]) => {
+        const coin = COINS.find(c => c.id === id);
+        const val = h.amount * coin.price;
+        const profit = val - h.invested;
+        return `
+          <div class="coin-row" style="border-left-color: ${profit >= 0 ? 'var(--green)' : 'var(--red)'}; background: rgba(26,31,58,0.6);">
+            <div>${coin.symbol}</div>
+            <div>${h.amount.toFixed(4)}</div>
+            <div>$${val.toFixed(2)}</div>
+            <div style="text-align: right;">${profit >= 0 ? '+' : ''}$${profit.toFixed(2)}</div>
+          </div>
+        `;
+      }).join('') || '<p style="color: var(--t2); padding: 10px;">No holdings yet</p>';
+      
+      const pval = state.cash + Object.entries(state.holdings).reduce((a, [id, h]) => a + h.amount * COINS.find(c => c.id === id).price, 0);
+      const pl = pval - state.initial;
+      const roi = (pl / state.initial * 100).toFixed(2);
+      
+      document.getElementById('portfolio').textContent = '$' + pval.toFixed(2);
+      const plEl = document.getElementById('pl');
+      plEl.textContent = (pl >= 0 ? '+' : '') + '$' + pl.toFixed(2);
+      plEl.className = 'stat-value ' + (pl >= 0 ? 'profit' : 'loss');
+      document.getElementById('roi').textContent = (roi >= 0 ? '+' : '') + roi + '%';
+      document.getElementById('trades').textContent = state.trades;
+      document.getElementById('winrate').textContent = (state.trades > 0 ? (state.wins / state.trades * 100).toFixed(0) : 0) + '%';
+    }
+
+    function log(msg, type = 'info') {
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + type;
+      entry.innerHTML = `<div class="log-time">${new Date().toLocaleTimeString()}</div><div>${msg}</div>`;
+      logEl.insertBefore(entry, logEl.firstChild);
+    }
+
+    async function startTrading() {
+      if (state.isTrading) return;
+      state.isTrading = true;
+      document.getElementById('startBtn').disabled = true;
+      
+      log('🤖 Agent started analyzing 8 coins...', 'success');
+      await new Promise(r => setTimeout(r, 800));
+      
+      const best = COINS.map(c => ({ ...c, score: score(c) })).filter(c => c.score > 70).sort((a, b) => b.score - a.score).slice(0, 5);
+      
+      if (best.length === 0) {
+        log('⚠️ No coins meet criteria', 'error');
+        state.isTrading = false;
+        document.getElementById('startBtn').disabled = false;
+        return;
+      }
+      
+      log(`✅ Found ${best.length} profitable coins with score > 70`, 'success');
+      
+      for (const coin of best) {
+        const amt = state.cash * 0.8 / best.length;
+        const shares = amt / coin.price;
+        state.holdings[coin.id] = { amount: shares, invested: amt };
+        state.cash -= amt;
+        log(`📈 BUY ${shares.toFixed(4)} ${coin.symbol} @ $${coin.price.toFixed(2)} | $${amt.toFixed(2)}`, 'buy');
+        show();
+        await new Promise(r => setTimeout(r, 800));
+      }
+      
+      log('⏳ Monitoring positions...', 'success');
+      
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 1200));
+        COINS.forEach(c => {
+          c.price *= (1 + (Math.random() - 0.5) * 0.03);
+        });
+        show();
+      }
+      
+      log('🎯 Checking sell signals...', 'success');
+      
+      for (const [id, h] of Object.entries(state.holdings)) {
+        const coin = COINS.find(c => c.id === id);
+        const gain = (coin.price - h.invested / h.amount) / (h.invested / h.amount) * 100;
+        
+        if (gain > 5 || gain < -3) {
+          const val = h.amount * coin.price;
+          const profit = val - h.invested;
+          state.cash += val;
+          delete state.holdings[id];
+          state.trades++;
+          if (profit > 0) state.wins++;
+          
+          log(`📉 SELL ${h.amount.toFixed(4)} ${coin.symbol} @ $${coin.price.toFixed(2)} | Profit: ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} (${gain.toFixed(1)}%)`, profit >= 0 ? 'sell' : 'error');
+          show();
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
+      
+      log('✅ Trading cycle complete!', 'success');
+      state.isTrading = false;
+      document.getElementById('startBtn').disabled = false;
+    }
+
+    function resetAll() {
+      state.cash = 10000;
+      state.holdings = {};
+      state.trades = 0;
+      state.wins = 0;
+      document.getElementById('log').innerHTML = '';
+      log('♻️ Portfolio reset', 'success');
+      show();
+    }
+
+    show();
+  </script>
+</body>
+</html>
