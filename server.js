@@ -1,0 +1,781 @@
+const express = require('express');
+const axios   = require('axios');
+const WebSocket = require('ws');
+const path    = require('path');
+const { createClient } = require('@libsql/client');
+const crypto = require('crypto');
+
+// ── TURSO DATABASE ────────────────────────────────────────────────
+const db = createClient({
+  url:       process.env.TURSO_DATABASE_URL || '',
+  authToken: process.env.TURSO_AUTH_TOKEN   || '',
+});
+
+async function initDB() {
+  if (!process.env.TURSO_DATABASE_URL) {
+    console.warn('TURSO_DATABASE_URL not set — DB logging disabled');
+    return;
+  }
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS signals (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol      TEXT,
+      signal      TEXT,
+      entry       REAL,
+      tp          REAL,
+      sl          REAL,
+      confidence  INTEGER,
+      reasoning   TEXT,
+      outcome     TEXT DEFAULT 'PENDING',
+      exit_price  REAL,
+      pnl_pct     REAL,
+      evaluated_at DATETIME,
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  console.log('Turso DB ready');
+}
+
+// ── MEMORY ───────────────────────────────────────────────────────
+async function loadMemory(symbol) {
+  if (!process.env.TURSO_DATABASE_URL) return '';
+  try {
+    const symRows = await db.execute({
+      sql: `SELECT symbol,signal,entry,tp,sl,confidence,outcome,pnl_pct,reasoning,created_at
+            FROM signals WHERE outcome!='PENDING' AND symbol=?
+            ORDER BY id DESC LIMIT 15`,
+      args: [symbol||'N/A']
+    });
+    const allRows = await db.execute({
+      sql: `SELECT symbol,signal,confidence,outcome,pnl_pct
+            FROM signals WHERE outcome!='PENDING'
+            ORDER BY id DESC LIMIT 30`,
+      args: []
+    });
+    const statsRows = await db.execute({
+      sql: `SELECT symbol,COUNT(*) as total,
+              SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins,
+              ROUND(AVG(pnl_pct),2) as avg_pnl
+            FROM signals WHERE outcome IN ('WIN','LOSS')
+            GROUP BY symbol ORDER BY total DESC LIMIT 10`,
+      args: []
+    });
+    if (!allRows.rows.length) return '';
+
+    const symHistory = symRows.rows;
+    let streak=0, streakType='';
+    if(symHistory.length>0){
+      const last=symHistory[0].outcome; streakType=last;
+      for(const r of symHistory){ if(r.outcome===last) streak++; else break; }
+    }
+    const streakStr = streak>1 ? `\n⚡ STREAK: ${streak} consecutive ${streakType}s on ${symbol}` : '';
+
+    const symLines = symRows.rows.map(r=>{
+      const pnl = r.pnl_pct!=null?`PnL=${r.pnl_pct}%`:'';
+      return `  [${r.created_at}] ${r.symbol} ${r.signal} entry=${r.entry} conf=${r.confidence}% => ${r.outcome} ${pnl}`;
+    }).join('\n');
+
+    const statsLines = statsRows.rows.map(r=>
+      `  ${r.symbol}: ${r.wins}/${r.total} wins avg_pnl=${r.avg_pnl}%`
+    ).join('\n');
+
+    return `\n\nYOUR MEMORY:\n1. ${symbol} HISTORY:${streakStr}\n${symLines||'  No history'}\n2. WIN RATES:\n${statsLines||'  No data'}\nRULES: <40% winrate=skip | same losing pattern=skip | 2+ losses streak=skip | winning pattern=+0.5 conf`;
+  } catch(e) {
+    console.error('loadMemory error:', e.message);
+    return '';
+  }
+}
+
+// ── AUTO-EVALUATOR ────────────────────────────────────────────────
+async function evaluatePendingSignals() {
+  if (!process.env.TURSO_DATABASE_URL) return;
+  try {
+    const rows = await db.execute({
+      sql: `SELECT id,symbol,signal,entry,tp,sl,created_at FROM signals WHERE outcome='PENDING'`,
+      args: []
+    });
+    if (!rows.rows.length) return;
+    for (const row of rows.rows) {
+      const coin = marketCache.find(c=>c.symbol===row.symbol);
+      if (!coin) continue;
+      const price=coin.price, isLong=row.signal==='LONG', isShort=row.signal==='SHORT';
+      let outcome=null, exitPrice=price;
+      if(isLong){
+        if(price>=row.tp){outcome='WIN';exitPrice=row.tp;}
+        else if(price<=row.sl){outcome='LOSS';exitPrice=row.sl;}
+      } else if(isShort){
+        if(price<=row.tp){outcome='WIN';exitPrice=row.tp;}
+        else if(price>=row.sl){outcome='LOSS';exitPrice=row.sl;}
+      }
+      if(!outcome){
+        const created=new Date(row.created_at+'Z').getTime();
+        const age=Date.now()-created;
+        if(!isNaN(age)&&age>24*60*60*1000) outcome='EXPIRED';
+      }
+      if(outcome){
+        const pnlPct=(row.entry&&row.entry>0)
+          ? parseFloat((((exitPrice-row.entry)/row.entry)*100*(isShort?-1:1)).toFixed(2)) : null;
+        const validPnl=(pnlPct!==null&&Math.abs(pnlPct)<50)?pnlPct:null;
+        await db.execute({
+          sql:`UPDATE signals SET outcome=?,exit_price=?,pnl_pct=?,evaluated_at=CURRENT_TIMESTAMP WHERE id=?`,
+          args:[outcome,exitPrice,validPnl,row.id]
+        });
+        console.log(`Signal #${row.id} ${row.symbol} ${row.signal} => ${outcome} PnL=${pnlPct}%`);
+      }
+    }
+  } catch(e) { console.error('evaluatePendingSignals error:',e.message); }
+}
+
+// ── TRADING MODE ──────────────────────────────────────────────────
+let tradingMode = process.env.TRADING_MODE || 'paper';
+const SESSION_TOKENS = new Set();
+
+// ── KUCOIN ORDER EXECUTION ────────────────────────────────────────
+function kuSign(secret,ts,method,endpoint,body=''){
+  return crypto.createHmac('sha256',secret).update(ts+method.toUpperCase()+endpoint+body).digest('base64');
+}
+function kuHeaders(method,endpoint,body=''){
+  const key=process.env.KUCOIN_API_KEY||'',secret=process.env.KUCOIN_API_SECRET||'',
+        passphrase=process.env.KUCOIN_PASSPHRASE||'',ts=Date.now().toString();
+  return {
+    'KC-API-KEY':key,
+    'KC-API-SIGN':kuSign(secret,ts,method,endpoint,body),
+    'KC-API-TIMESTAMP':ts,
+    'KC-API-PASSPHRASE':crypto.createHmac('sha256',secret).update(passphrase).digest('base64'),
+    'KC-API-KEY-VERSION':'2',
+    'Content-Type':'application/json'
+  };
+}
+async function placeMarketOrder(symbol,side,sizeUsdt,coinQty=null){
+  const endpoint='/api/v1/orders';
+  const sizeField=side==='buy'?{funds:parseFloat(sizeUsdt).toFixed(2)}:{size:(coinQty||(sizeUsdt/(marketCache.find(c=>c.symbol===symbol)?.price||1))).toFixed(6)};
+  const body=JSON.stringify({clientOid:`nexus_${Date.now()}`,side,symbol:`${symbol}-USDT`,type:'market',...sizeField});
+  const r=await axios.post(`https://api.kucoin.com${endpoint}`,body,{headers:kuHeaders('POST',endpoint,body),timeout:10000});
+  if(r.data.code!=='200000') throw new Error(`KuCoin order failed: ${r.data.msg}`);
+  return r.data.data.orderId;
+}
+async function placeStopOrder(symbol,side,stopPrice,size){
+  const endpoint='/api/v1/stop-order';
+  const body=JSON.stringify({clientOid:`nexus_sl_${Date.now()}`,side,symbol:`${symbol}-USDT`,type:'market',stop:side==='sell'?'loss':'entry',stopPrice:stopPrice.toFixed(8),size:size.toFixed(6)});
+  const r=await axios.post(`https://api.kucoin.com${endpoint}`,body,{headers:kuHeaders('POST',endpoint,body),timeout:10000});
+  if(r.data.code!=='200000') throw new Error(`KuCoin stop failed: ${r.data.msg}`);
+  return r.data.data.orderId;
+}
+async function placeLimitOrder(symbol,side,price,size){
+  const endpoint='/api/v1/orders';
+  const body=JSON.stringify({clientOid:`nexus_tp_${Date.now()}`,side,symbol:`${symbol}-USDT`,type:'limit',price:price.toFixed(8),size:size.toFixed(6)});
+  const r=await axios.post(`https://api.kucoin.com${endpoint}`,body,{headers:kuHeaders('POST',endpoint,body),timeout:10000});
+  if(r.data.code!=='200000') throw new Error(`KuCoin limit failed: ${r.data.msg}`);
+  return r.data.data.orderId;
+}
+async function cancelKuOrder(orderId){
+  const endpoint=`/api/v1/orders/${orderId}`;
+  const r=await axios.delete(`https://api.kucoin.com${endpoint}`,{headers:kuHeaders('DELETE',endpoint),timeout:10000});
+  return r.data;
+}
+
+const app  = express();
+const PORT = process.env.PORT || 3000;
+const CLAUDE_KEY   = process.env.CLAUDE_API_KEY || '';
+const NEWSDATA_KEY = process.env.Newsdata || '';
+
+app.use(express.json({limit:'10mb'}));
+app.use(express.static(path.join(__dirname)));
+
+// ── AUTH MIDDLEWARE ────────────────────────────────────────────────
+function requireAuth(req,res,next){
+  if(req.path==='/api/auth'||req.path==='/api/auth/verify') return next();
+  if(!req.path.startsWith('/api')) return next();
+  const token=req.headers['x-nexus-token'];
+  if(token&&SESSION_TOKENS.has(token)) return next();
+  return res.status(401).json({ok:false,error:'Unauthorized — please login'});
+}
+app.use(requireAuth);
+
+// ── LIVE DATA STORE ───────────────────────────────────────────────
+const store={};
+let activeSymbols=[], wsConnection=null, wsConnected=false;
+
+// ── INDICATORS ────────────────────────────────────────────────────
+function ema(arr,n){
+  if(!arr||arr.length<n) return arr?.at(-1)||0;
+  const k=2/(n+1); let e=arr.slice(0,n).reduce((a,b)=>a+b,0)/n;
+  for(let i=n;i<arr.length;i++) e=arr[i]*k+e*(1-k);
+  return e;
+}
+function rsi(closes,n=14){
+  // Wilder's Smoothed RSI — matches TradingView exactly
+  // Bug was: original used simple avg of last n candles only (Cutler's RSI), not standard
+  if(!closes||closes.length<n+1) return 50;
+  let avgG=0,avgL=0;
+  for(let i=1;i<=n;i++){const d=closes[i]-closes[i-1];if(d>0)avgG+=d;else avgL-=d;}
+  avgG/=n; avgL/=n;
+  for(let i=n+1;i<closes.length;i++){
+    const d=closes[i]-closes[i-1];
+    avgG=(avgG*(n-1)+(d>0?d:0))/n;
+    avgL=(avgL*(n-1)+(d<0?-d:0))/n;
+  }
+  if(avgL===0) return 100;
+  return parseFloat((100-100/(1+avgG/avgL)).toFixed(1));
+}
+function macd(closes){
+  // BUG WAS: closes.slice(-35) gave only ~10 MACD values for signal EMA — signal line was garbage
+  // FIX: proper iterative O(n) — EMA12, EMA26, then signal EMA9 of full MACD series
+  if(!closes||closes.length<35) return {macd:0,signal:0,hist:0,crossUp:false,crossDn:false};
+  const k12=2/13,k26=2/27,k9=2/10;
+  let e12=closes.slice(0,12).reduce((a,b)=>a+b,0)/12;
+  let e26=closes.slice(0,26).reduce((a,b)=>a+b,0)/26;
+  // Advance e12 to candle 25 (sync with e26 start)
+  for(let i=12;i<26;i++) e12=closes[i]*k12+e12*(1-k12);
+  // Collect first 9 MACD values to SMA-seed the signal line
+  const seed=[];
+  for(let i=26;i<Math.min(35,closes.length);i++){
+    e12=closes[i]*k12+e12*(1-k12);
+    e26=closes[i]*k26+e26*(1-k26);
+    seed.push(e12-e26);
+  }
+  if(seed.length<9) return {macd:seed.at(-1)||0,signal:seed.at(-1)||0,hist:0,crossUp:false,crossDn:false};
+  let macdVal=seed.at(-1), sigVal=seed.reduce((a,b)=>a+b,0)/9;
+  let prevMacd=macdVal, prevSig=sigVal;
+  for(let i=35;i<closes.length;i++){
+    prevMacd=macdVal; prevSig=sigVal;
+    e12=closes[i]*k12+e12*(1-k12);
+    e26=closes[i]*k26+e26*(1-k26);
+    macdVal=e12-e26;
+    sigVal=macdVal*k9+sigVal*(1-k9);
+  }
+  return {
+    macd:parseFloat(macdVal.toFixed(6)),
+    signal:parseFloat(sigVal.toFixed(6)),
+    hist:parseFloat((macdVal-sigVal).toFixed(6)),
+    crossUp:prevMacd<prevSig&&macdVal>=sigVal,  // Golden cross this candle
+    crossDn:prevMacd>prevSig&&macdVal<=sigVal,  // Death cross this candle
+  };
+}
+function bollingerBands(closes,n=20,mult=2){
+  if(!closes||closes.length<n) return {upper:0,mid:0,lower:0,bwidth:0};
+  const slice=closes.slice(-n);
+  const mid=slice.reduce((a,b)=>a+b,0)/n;
+  const std=Math.sqrt(slice.reduce((s,v)=>s+(v-mid)**2,0)/n);
+  const upper=mid+mult*std, lower=mid-mult*std;
+  return {
+    upper:parseFloat(upper.toFixed(6)),
+    mid:parseFloat(mid.toFixed(6)),
+    lower:parseFloat(lower.toFixed(6)),
+    bwidth:parseFloat(((upper-lower)/mid*100).toFixed(2))
+  };
+}
+function stochRsi(closes,n=14,smoothK=3,smoothD=3){
+  // BUG WAS: kArr was a weird nested-stoch of RSI values, not standard SMA smoothing
+  // FIX: Standard TradingView StochRSI — rawStoch → SMA(smoothK) = K → SMA(smoothD) = D
+  const minLen=n*2+smoothK+smoothD;
+  if(!closes||closes.length<minLen) return {k:50,d:50,crossUp:false,crossDn:false};
+  // Build RSI array
+  const rsiArr=[];
+  for(let i=n;i<closes.length;i++) rsiArr.push(rsi(closes.slice(0,i+1),n));
+  if(rsiArr.length<n+smoothK+smoothD) return {k:50,d:50,crossUp:false,crossDn:false};
+  // Build raw stochastic RSI
+  const rawArr=[];
+  for(let i=n-1;i<rsiArr.length;i++){
+    const win=rsiArr.slice(i-n+1,i+1);
+    const mn=Math.min(...win),mx=Math.max(...win);
+    rawArr.push(mx===mn?50:((rsiArr[i]-mn)/(mx-mn))*100);
+  }
+  if(rawArr.length<smoothK+smoothD) return {k:50,d:50,crossUp:false,crossDn:false};
+  // K = SMA(rawArr, smoothK)
+  const kArr=[];
+  for(let i=smoothK-1;i<rawArr.length;i++){
+    const sl=rawArr.slice(i-smoothK+1,i+1);
+    kArr.push(sl.reduce((a,b)=>a+b,0)/smoothK);
+  }
+  if(kArr.length<smoothD) return {k:50,d:50,crossUp:false,crossDn:false};
+  // D = SMA(K, smoothD)
+  const dSlice=kArr.slice(-smoothD);
+  const d=dSlice.reduce((a,b)=>a+b,0)/smoothD;
+  const k=kArr.at(-1);
+  const prevK=kArr.at(-2)||k;
+  const prevD=kArr.length>=smoothD+1?(kArr.slice(-smoothD-1,-1).reduce((a,b)=>a+b,0)/smoothD):d;
+  return {
+    k:parseFloat(k.toFixed(1)),
+    d:parseFloat(d.toFixed(1)),
+    crossUp:prevK<prevD&&k>=d&&k<80,  // K crossed above D (not overbought)
+    crossDn:prevK>prevD&&k<=d&&k>20,  // K crossed below D (not oversold)
+  };
+}
+function atr(highs,lows,closes,n=14){
+  // Now returns {pct, abs} — abs useful for precise SL/TP calculation
+  if(!closes||closes.length<n+1) return {pct:1,abs:0};
+  let sum=0;
+  for(let i=closes.length-n;i<closes.length;i++){
+    const prev=closes[i-1]||closes[i];
+    sum+=Math.max(highs[i]-lows[i],Math.abs(highs[i]-prev),Math.abs(lows[i]-prev));
+  }
+  const absATR=sum/n;
+  return {pct:parseFloat((absATR/closes.at(-1)*100).toFixed(2)),abs:parseFloat(absATR.toFixed(6))};
+}
+function trend(closes){
+  if(!closes||closes.length<55) return 'SIDE';
+  const e9=ema(closes,9),e21=ema(closes,21),e50=ema(closes,50);
+  if(e9>e21&&e21>e50) return 'UP';
+  if(e9<e21&&e21<e50) return 'DOWN';
+  return 'SIDE';
+}
+function mom(closes,n=10){
+  if(!closes||closes.length<n+2) return 0;
+  return parseFloat(((closes.at(-1)-closes.at(-n-1))/closes.at(-n-1)*100).toFixed(2));
+}
+function volRatio(vols){
+  if(!vols||vols.length<5) return 1;
+  const avg=vols.slice(-20).reduce((a,b)=>a+b,0)/Math.min(vols.length,20);
+  return avg>0?parseFloat((vols.at(-1)/avg).toFixed(2)):1;
+}
+// NEW: On-Balance Volume direction (last 5 candles net flow)
+function obv(closes,vols){
+  if(!closes||closes.length<5) return 0;
+  let net=0;
+  const start=Math.max(1,closes.length-5);
+  for(let i=start;i<closes.length;i++){
+    if(closes[i]>closes[i-1]) net+=vols[i];
+    else if(closes[i]<closes[i-1]) net-=vols[i];
+  }
+  return net>0?1:net<0?-1:0;
+}
+// NEW: Williams %R — overbought/oversold confirmation
+function williamsR(highs,lows,closes,n=14){
+  if(!closes||closes.length<n) return -50;
+  const hs=highs.slice(-n),ls=lows.slice(-n);
+  const hh=Math.max(...hs),ll=Math.min(...ls);
+  if(hh===ll) return -50;
+  return parseFloat(((hh-closes.at(-1))/(hh-ll)*-100).toFixed(1));
+}
+function pattern(candles){
+  // BUG WAS: HAMMER check didn't verify upper wick — shooting star falsely returned HAMMER
+  // FIX: Added upper wick check + added SHOOT_STAR, MORNING_STAR, EVENING_STAR
+  if(!candles||candles.length<3) return 'N/A';
+  const [c1,c2,c3]=candles.slice(-3);
+  const body=Math.abs(c3.close-c3.open),range=c3.high-c3.low;
+  const bull=c3.close>c3.open;
+  const upperWick=c3.high-Math.max(c3.open,c3.close);
+  const lowerWick=Math.min(c3.open,c3.close)-c3.low;
+  const c2body=Math.abs(c2.close-c2.open),c1body=Math.abs(c1.close-c1.open);
+  // Engulfing
+  if(bull&&c2.close<c2.open&&c3.close>c2.open&&c3.open<c2.close) return 'BULL_ENGULF';
+  if(!bull&&c2.close>c2.open&&c3.close<c2.open&&c3.open>c2.close) return 'BEAR_ENGULF';
+  // Doji
+  if(range>0&&body/range<0.1) return 'DOJI';
+  // Three-candle reversal patterns
+  const midIsDoji=c2body<c1body*0.3;
+  if(c1.close<c1.open&&midIsDoji&&c3.close>c3.open&&c3.close>(c1.open+c1.close)/2) return 'MORNING_STAR';
+  if(c1.close>c1.open&&midIsDoji&&c3.close<c3.open&&c3.close<(c1.open+c1.close)/2) return 'EVENING_STAR';
+  // Three consecutive same-direction
+  if(c1.close>c1.open&&c2.close>c2.open&&c3.close>c3.open) return '3_GREEN';
+  if(c1.close<c1.open&&c2.close<c2.open&&c3.close<c3.open) return '3_RED';
+  // Hammer: long lower wick, small upper wick (bullish reversal)
+  if(lowerWick>body*2&&upperWick<body*0.5) return 'HAMMER';
+  // Shooting Star: long upper wick, small lower wick (bearish reversal) — was missing!
+  if(upperWick>body*2&&lowerWick<body*0.5) return 'SHOOT_STAR';
+  return 'NORMAL';
+}
+
+function tfSnapshot(candles){
+  if(!candles||candles.length<26) return null;
+  const closes=candles.map(c=>c.close);
+  const highs=candles.map(c=>c.high);
+  const lows=candles.map(c=>c.low);
+  const vols=candles.map(c=>c.vol);
+  const bb=bollingerBands(closes);
+  const mc=macd(closes);
+  const sr=stochRsi(closes);
+  const atrData=atr(highs,lows,closes);
+  return {
+    trend:       trend(closes),
+    rsi:         rsi(closes),
+    stochK:      sr.k,
+    stochD:      sr.d,
+    stochCrossUp:sr.crossUp,
+    stochCrossDn:sr.crossDn,
+    macdHist:    mc.hist,
+    macdBull:    mc.hist>0,
+    macdCrossUp: mc.crossUp,   // Fresh golden cross this candle
+    macdCrossDn: mc.crossDn,   // Fresh death cross this candle
+    bb:          bb,
+    bbPos:       parseFloat(((closes.at(-1)-bb.lower)/(bb.upper-bb.lower||1)*100).toFixed(1)),
+    mom10:       mom(closes,10),
+    atr:         atrData.pct,  // % ATR (backward compat for hard-reject thresholds)
+    atrAbs:      atrData.abs,  // Absolute ATR — use for SL/TP calculation
+    volRatio:    volRatio(vols),
+    obv:         obv(closes,vols),         // +1 rising, -1 falling, 0 flat
+    williamsR:   williamsR(highs,lows,closes), // -100 to 0 (below -80=oversold, above -20=overbought)
+    ema9:        parseFloat(ema(closes,9).toFixed(6)),
+    ema21:       parseFloat(ema(closes,21).toFixed(6)),
+    ema50:       closes.length>=50?parseFloat(ema(closes,50).toFixed(6)):null,
+    support:     parseFloat(Math.min(...lows.slice(-20)).toFixed(6)),
+    resist:      parseFloat(Math.max(...highs.slice(-20)).toFixed(6)),
+    pattern:     pattern(candles),
+  };
+}
+
+// ── SMART PRE-FILTER (saves ~70% Claude API calls) ────────────────
+// Score 0-120+. Claude called only if score >= ~55 (normal) / ~40 (aggressive)
+function preFilter(coin, aggressive=false) {
+  const m15=coin.m15, h1=coin.h1, h4=coin.h4;
+  if(!m15||!h1||!h4) return {score:0, reason:'No data'};
+
+  const reasons = [];
+  let score = 0;
+
+  // ── Hard rejects ──────────────────────────────────────────────
+  if(!aggressive){
+    if(h4.trend==='SIDE'&&h1.trend==='SIDE') return {score:0, reason:'Both h4+h1 SIDE'};
+    if(h4.trend!==h1.trend&&h4.trend!=='SIDE'&&h1.trend!=='SIDE') return {score:0, reason:'h4/h1 conflict'};
+    if(m15.atr>5) return {score:0, reason:`ATR too high ${m15.atr}%`};
+    if(m15.volRatio<0.9) return {score:0, reason:`Low volume ${m15.volRatio}x`};
+  } else {
+    if(h4.trend==='SIDE'&&h1.trend==='SIDE'&&m15.trend==='SIDE') return {score:0, reason:'All 3TF SIDE'};
+    if(m15.atr>8) return {score:0, reason:`ATR extreme ${m15.atr}%`};
+    if(m15.volRatio<0.6) return {score:0, reason:`Volume too low ${m15.volRatio}x`};
+  }
+
+  const longSetup = (aggressive ? h1.trend==='UP' : h4.trend==='UP'&&h1.trend==='UP');
+  const shortSetup = (aggressive ? h1.trend==='DOWN' : h4.trend==='DOWN'&&h1.trend==='DOWN');
+
+  if(longSetup){
+    score+=20; reasons.push('Trend UP');
+    if(h1.rsi<65){ score+=15; reasons.push(`RSI ${h1.rsi} OK`); }
+    else if(h1.rsi<72){ score+=5; reasons.push(`RSI ${h1.rsi} border`); }
+    else return {score:0, reason:`RSI overbought ${h1.rsi}`};
+    if(h1.macdBull){ score+=10; reasons.push('MACD bull'); }
+    if(h1.macdCrossUp){ score+=12; reasons.push('h1 MACD ⚡crossUp'); }
+    if(m15.macdCrossUp){ score+=8; reasons.push('m15 MACD crossUp'); }
+    if(h1.bbPos<75){ score+=8; reasons.push(`BB ${h1.bbPos}%`); }
+    if(h1.stochK<75){ score+=7; reasons.push(`Stoch ${h1.stochK}`); }
+    if(h1.stochCrossUp){ score+=8; reasons.push('Stoch ⚡crossUp'); }
+    if(h1.williamsR!==undefined&&h1.williamsR<-20&&h1.williamsR>-80){ score+=5; reasons.push(`W%R ${h1.williamsR}`); }
+    if(m15.obv>0){ score+=6; reasons.push('OBV rising'); }
+    if(m15.volRatio>1.5){ score+=15; reasons.push(`Vol ${m15.volRatio}x strong`); }
+    else if(m15.volRatio>1.2){ score+=8; reasons.push(`Vol ${m15.volRatio}x ok`); }
+    if(['BULL_ENGULF','HAMMER','3_GREEN','MORNING_STAR'].includes(m15.pattern)){ score+=15; reasons.push(`🕯 ${m15.pattern}`); }
+    else if(m15.pattern==='DOJI'&&h1.trend==='UP'){ score+=5; reasons.push('DOJI pullback'); }
+  } else if(shortSetup){
+    score+=20; reasons.push('Trend DOWN');
+    if(h1.rsi>35){ score+=15; reasons.push(`RSI ${h1.rsi} OK`); }
+    else if(h1.rsi>28){ score+=5; reasons.push(`RSI ${h1.rsi} border`); }
+    else return {score:0, reason:`RSI oversold ${h1.rsi}`};
+    if(!h1.macdBull){ score+=10; reasons.push('MACD bear'); }
+    if(h1.macdCrossDn){ score+=12; reasons.push('h1 MACD ⚡crossDn'); }
+    if(m15.macdCrossDn){ score+=8; reasons.push('m15 MACD crossDn'); }
+    if(h1.bbPos>25){ score+=8; reasons.push(`BB ${h1.bbPos}%`); }
+    if(h1.stochK>25){ score+=7; reasons.push(`Stoch ${h1.stochK}`); }
+    if(h1.stochCrossDn){ score+=8; reasons.push('Stoch ⚡crossDn'); }
+    if(h1.williamsR!==undefined&&h1.williamsR>-80&&h1.williamsR<-20){ score+=5; reasons.push(`W%R ${h1.williamsR}`); }
+    if(m15.obv<0){ score+=6; reasons.push('OBV falling'); }
+    if(m15.volRatio>1.5){ score+=15; reasons.push(`Vol ${m15.volRatio}x strong`); }
+    else if(m15.volRatio>1.2){ score+=8; reasons.push(`Vol ${m15.volRatio}x ok`); }
+    if(['BEAR_ENGULF','3_RED','SHOOT_STAR','EVENING_STAR'].includes(m15.pattern)){ score+=15; reasons.push(`🕯 ${m15.pattern}`); }
+    else if(m15.pattern==='DOJI'&&h1.trend==='DOWN'){ score+=5; reasons.push('DOJI resistance'); }
+  } else {
+    return {score:0, reason:'No clear setup'};
+  }
+
+  const direction = longSetup ? 'LONG' : 'SHORT';
+  return {score, direction, reasons: reasons.join(' | ')};
+}
+
+// ── KUCOIN WEBSOCKET ──────────────────────────────────────────────
+async function loadCandles(sym,interval,limit=100){
+  const mins=interval==='15min'?15:interval==='1hour'?60:240;
+  const endAt=Math.floor(Date.now()/1000);
+  const startAt=endAt-(limit*mins*60);
+  const r=await axios.get('https://api.kucoin.com/api/v1/market/candles',{
+    params:{symbol:`${sym}-USDT`,type:interval,startAt,endAt},
+    timeout:12000,headers:{Accept:'application/json'}
+  });
+  if(r.data.code!=='200000') throw new Error(`${sym} ${interval}: ${r.data.msg}`);
+  return r.data.data.reverse().map(k=>({
+    time:parseInt(k[0]),open:parseFloat(k[1]),close:parseFloat(k[2]),
+    high:parseFloat(k[3]),low:parseFloat(k[4]),vol:parseFloat(k[5])
+  }));
+}
+
+async function getWsToken(){
+  const r=await axios.post('https://api.kucoin.com/api/v1/bullet-public',{},{timeout:8000});
+  if(r.data.code!=='200000') throw new Error('WS token failed');
+  return {token:r.data.data.token,endpoint:r.data.data.instanceServers[0].endpoint};
+}
+
+async function connectWebSocket(){
+  if(wsConnected) return;
+  try {
+    const {token,endpoint}=await getWsToken();
+    wsConnection=new WebSocket(`${endpoint}?token=${token}&connectId=nexus${Date.now()}`);
+    wsConnection.on('open',()=>{
+      wsConnected=true; console.log('WebSocket connected');
+      const topics=activeSymbols.slice(0,20).map(s=>`${s}-USDT`).join(',');
+      wsConnection.send(JSON.stringify({id:Date.now(),type:'subscribe',topic:`/market/ticker:${topics}`,privateChannel:false,response:true}));
+      activeSymbols.slice(0,10).forEach(sym=>{
+        wsConnection.send(JSON.stringify({id:Date.now()+Math.random(),type:'subscribe',topic:`/market/candles:${sym}-USDT_15min`,privateChannel:false,response:true}));
+      });
+      if(app._heartbeat) clearInterval(app._heartbeat);
+      app._heartbeat=setInterval(()=>{if(wsConnected) wsConnection.send(JSON.stringify({id:Date.now(),type:'ping'}));},20000);
+    });
+    wsConnection.on('message',(raw)=>{
+      try {
+        const msg=JSON.parse(raw.toString());
+        if(msg.type!=='message') return;
+        if(msg.topic&&msg.topic.includes('/market/ticker:')){
+          const sym=msg.subject?.replace('-USDT','');
+          if(!sym||!store[sym]) return;
+          const d=msg.data, price=parseFloat(d.price);
+          store[sym].tick={price,change24h:parseFloat((parseFloat(d.changeRate||0)*100).toFixed(2)),volume24h:parseFloat(d.volValue||0),bid:parseFloat(d.bestBid||price),ask:parseFloat(d.bestAsk||price),lastUpdated:Date.now()};
+          if(store[sym].m15?.length>0){const last=store[sym].m15.at(-1);last.close=price;last.high=Math.max(last.high,price);last.low=Math.min(last.low,price);}
+          buildCache();
+        }
+        if(msg.topic&&msg.topic.includes('/market/candles:')){
+          const parts=msg.topic.split(':')[1]?.split('_');
+          if(!parts) return;
+          const sym=parts[0].replace('-USDT','');
+          if(!store[sym]) return;
+          const k=msg.data?.candles; if(!k) return;
+          const candle={time:parseInt(k[0]),open:parseFloat(k[1]),close:parseFloat(k[2]),high:parseFloat(k[3]),low:parseFloat(k[4]),vol:parseFloat(k[5])};
+          const arr=store[sym].m15, last=arr.at(-1);
+          if(last&&last.time===candle.time) arr[arr.length-1]=candle;
+          else{arr.push(candle);if(arr.length>150) arr.shift();}
+          buildCache();
+        }
+      } catch(e){}
+    });
+    wsConnection.on('close',()=>{wsConnected=false;console.log('WS closed — retry 5s');setTimeout(connectWebSocket,5000);});
+    wsConnection.on('error',(e)=>{console.error('WS error:',e.message);wsConnected=false;});
+  } catch(e){console.error('WS connect failed:',e.message);setTimeout(connectWebSocket,10000);}
+}
+
+async function initialLoad(){
+  console.log('Loading top coins...');
+  try {
+    const r=await axios.get('https://api.kucoin.com/api/v1/market/allTickers',{timeout:10000});
+    if(r.data.code!=='200000') throw new Error('Tickers failed');
+    const exclude=['USDT','USDC','BUSD','DAI','TUSD','3L','3S','2L','2S','UP','DOWN','BEAR','BULL'];
+    activeSymbols=r.data.data.ticker
+      .filter(t=>t.symbol.endsWith('-USDT')&&!exclude.some(e=>t.symbol.replace('-USDT','').includes(e))&&parseFloat(t.volValue)>5000000)
+      .sort((a,b)=>parseFloat(b.volValue)-parseFloat(a.volValue))
+      .slice(0,40).map(t=>t.symbol.replace('-USDT',''));
+    console.log(`Top coins: ${activeSymbols.slice(0,10).join(', ')} ...`);
+  } catch(e){
+    console.error('Top coins failed:',e.message);
+    activeSymbols=['BTC','ETH','BNB','SOL','XRP','DOGE','ADA','AVAX','LINK','DOT'];
+  }
+  let loaded=0;
+  for(const sym of activeSymbols){
+    store[sym]={tick:{},m15:[],h1:[],h4:[]};
+    try {
+      store[sym].m15=await loadCandles(sym,'15min',100); await sleep(150);
+      store[sym].h1=await loadCandles(sym,'1hour',100);  await sleep(150);
+      store[sym].h4=await loadCandles(sym,'4hour',60);   await sleep(150);
+      loaded++;
+    } catch(e){}
+  }
+  console.log(`Candles loaded: ${loaded}/${activeSymbols.length}`);
+  buildCache();
+  await connectWebSocket();
+}
+
+let marketCache=[];
+function buildCache(){
+  marketCache=activeSymbols.map(sym=>{
+    const d=store[sym];
+    if(!d||!d.m15||d.m15.length<26) return null;
+    const tick=d.tick||{}, price=tick.price||d.m15.at(-1)?.close||0;
+    return {
+      symbol:sym, price:parseFloat(price.toFixed(6)),
+      change24h:tick.change24h||0, volume24h:tick.volume24h||0,
+      bid:tick.bid||price, ask:tick.ask||price,
+      liveAge:tick.lastUpdated?Math.round((Date.now()-tick.lastUpdated)/1000):999,
+      m15:tfSnapshot(d.m15), h1:tfSnapshot(d.h1), h4:tfSnapshot(d.h4),
+    };
+  }).filter(Boolean).sort((a,b)=>(b.volume24h||0)-(a.volume24h||0));
+}
+
+let newsCache={data:[],ts:0,sentiment:'NEUTRAL'};
+async function fetchNews(){
+  if(!NEWSDATA_KEY||Date.now()-newsCache.ts<300000) return newsCache;
+  try {
+    const r=await axios.get('https://newsdata.io/api/1/news',{params:{apikey:NEWSDATA_KEY,q:'crypto bitcoin',language:'en',size:8},timeout:8000});
+    const hl=(r.data.results||[]).map(a=>({title:a.title,time:a.pubDate,source:a.source_id}));
+    const text=hl.map(h=>h.title.toLowerCase()).join(' ');
+    const pos=['surge','rally','bull','gain','bullish','ath','record'].filter(w=>text.includes(w)).length;
+    const neg=['crash','dump','fall','bear','bearish','ban','collapse'].filter(w=>text.includes(w)).length;
+    newsCache={data:hl,ts:Date.now(),sentiment:pos>neg+1?'BULLISH':neg>pos+1?'BEARISH':'NEUTRAL'};
+  } catch(e){}
+  return newsCache;
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+// ── ROUTES ────────────────────────────────────────────────────────
+app.get('/api/data',(req,res)=>{
+  if(!marketCache.length) return res.status(503).json({ok:false,error:'Loading, retry in 20s'});
+  res.json({ok:true,data:marketCache,ts:Date.now(),wsConnected});
+});
+app.get('/api/news',async(req,res)=>{
+  try{res.json({ok:true,...(await fetchNews())});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+// ── PRE-FILTER ROUTE (check before Claude) ─────────────────────
+app.post('/api/prefilter',(req,res)=>{
+  const {symbols, aggressive=false} = req.body;
+  const coins = symbols
+    ? symbols.map(s=>marketCache.find(c=>c.symbol===s)).filter(Boolean)
+    : marketCache.slice(0,20);
+  const results = coins.map(coin=>{
+    const pf = preFilter(coin, aggressive);
+    return {symbol:coin.symbol, ...pf, price:coin.price};
+  }).filter(r=>r.score>0).sort((a,b)=>b.score-a.score);
+  res.json({ok:true, candidates:results, total:results.length});
+});
+
+// ── ANALYZE ROUTE ─────────────────────────────────────────────────
+let lastAnalyzeTime=0;
+app.post('/api/analyze',async(req,res)=>{
+  if(!CLAUDE_KEY) return res.status(500).json({ok:false,error:'CLAUDE_API_KEY not set'});
+  const now=Date.now();
+  if(now-lastAnalyzeTime<20000) return res.status(429).json({ok:false,error:'Rate limit'});
+  lastAnalyzeTime=now;
+  try {
+    const {prompt,model,aggressive=false} = req.body;
+    const knownSyms=activeSymbols.length?activeSymbols:['BTC','ETH','SOL','BNB','XRP'];
+    const allMatches=prompt?.match(/\b([A-Z]{2,10})\b/g)||[];
+    const promptSymbol=allMatches.find(s=>knownSyms.includes(s))||'N/A';
+    const memory=await loadMemory(promptSymbol);
+
+    const r=await axios.post('https://api.anthropic.com/v1/messages',{
+      model:model||'claude-sonnet-4-20250514',
+      max_tokens:2000,
+      system:`You are NEXUS PRO, an elite crypto trading agent optimized for profit.
+You receive pre-filtered high-quality setups with advanced indicators (MACD, Bollinger Bands, Stochastic RSI).
+These coins already passed a strict pre-filter — your job is to pick the BEST ones and set precise SL/TP.
+Return ONLY raw JSON. No markdown.
+FORMAT: {"market_read":"...","signals":[{"symbol":"...","direction":"LONG/SHORT","confidence":8.5,"sl_pct":2.0,"tp_pct":5.0,"reason":"..."}],"skip_reason":"..."}
+${memory}`,
+      messages:[{role:'user',content:prompt}]
+    },{
+      headers:{'x-api-key':CLAUDE_KEY,'anthropic-version':'2023-06-01','Content-Type':'application/json'},
+      timeout:30000
+    });
+
+    const text=r.data.content[0]?.text||'';
+    const m=text.match(/\{[\s\S]*\}/);
+    if(!m) return res.status(500).json({ok:false,error:'No JSON in response'});
+    const parsed=JSON.parse(m[0]);
+
+    if(process.env.TURSO_DATABASE_URL&&Array.isArray(parsed.signals)&&parsed.signals.length>0){
+      for(const sig of parsed.signals){
+        if(!['LONG','SHORT'].includes(sig.direction)||!sig.symbol||sig.symbol==='N/A') continue;
+        try {
+          const coin=marketCache.find(c=>c.symbol===sig.symbol);
+          const price=coin?.price||null;
+          const slPrice=price&&sig.sl_pct?parseFloat((price*(sig.direction==='LONG'?1-sig.sl_pct/100:1+sig.sl_pct/100)).toFixed(6)):null;
+          const tpPrice=price&&sig.tp_pct?parseFloat((price*(sig.direction==='LONG'?1+sig.tp_pct/100:1-sig.tp_pct/100)).toFixed(6)):null;
+          await db.execute({
+            sql:`INSERT INTO signals (symbol,signal,entry,tp,sl,confidence,reasoning) VALUES (?,?,?,?,?,?,?)`,
+            args:[sig.symbol,sig.direction,price,tpPrice,slPrice,sig.confidence||null,sig.reason||null]
+          });
+          console.log(`Signal saved: ${sig.symbol} ${sig.direction} conf=${sig.confidence}`);
+        } catch(dbErr){console.error('DB save error:',dbErr.message);}
+      }
+    }
+    res.json({ok:true,result:parsed});
+  } catch(e){
+    res.status(500).json({ok:false,error:e.response?.data?JSON.stringify(e.response.data).slice(0,200):e.message});
+  }
+});
+
+// ── AUTH ──────────────────────────────────────────────────────────
+app.post('/api/auth',(req,res)=>{
+  const {password}=req.body;
+  const correct=process.env.NEXUS_PASSWORD||'nexus123';
+  if(password!==correct) return res.status(401).json({ok:false,error:'Wrong password'});
+  const token=crypto.randomBytes(32).toString('hex');
+  SESSION_TOKENS.add(token);
+  setTimeout(()=>SESSION_TOKENS.delete(token),24*60*60*1000);
+  res.json({ok:true,token});
+});
+app.get('/api/auth/verify',(req,res)=>{
+  const token=req.headers['x-nexus-token'];
+  if(token&&SESSION_TOKENS.has(token)) return res.json({ok:true});
+  res.status(401).json({ok:false});
+});
+
+// ── TRADING MODE ──────────────────────────────────────────────────
+app.get('/api/mode',(req,res)=>{
+  res.json({ok:true,mode:tradingMode,keysConfigured:!!(process.env.KUCOIN_API_KEY&&process.env.KUCOIN_API_SECRET&&process.env.KUCOIN_PASSPHRASE)});
+});
+app.post('/api/mode',(req,res)=>{
+  const {mode}=req.body;
+  if(!['paper','live'].includes(mode)) return res.status(400).json({ok:false,error:'Mode must be paper or live'});
+  if(mode==='live'){
+    const missing=['KUCOIN_API_KEY','KUCOIN_API_SECRET','KUCOIN_PASSPHRASE'].filter(k=>!process.env[k]);
+    if(missing.length) return res.status(400).json({ok:false,error:`Missing: ${missing.join(', ')}`});
+  }
+  tradingMode=mode;
+  res.json({ok:true,mode});
+});
+
+// ── ORDER ROUTES ──────────────────────────────────────────────────
+app.post('/api/order',async(req,res)=>{
+  if(tradingMode!=='live') return res.json({ok:false,error:'Not in live mode'});
+  const missing=['KUCOIN_API_KEY','KUCOIN_API_SECRET','KUCOIN_PASSPHRASE'].filter(k=>!process.env[k]);
+  if(missing.length) return res.status(400).json({ok:false,error:`Missing keys: ${missing.join(', ')}`});
+  try {
+    const {symbol,direction,sizeUsdt,sl,tp,qty}=req.body;
+    const side=direction==='LONG'?'buy':'sell';
+    const entryId=await placeMarketOrder(symbol,side,sizeUsdt);
+    const slSide=direction==='LONG'?'sell':'buy';
+    const slId=await placeStopOrder(symbol,slSide,sl,qty);
+    const tpId=await placeLimitOrder(symbol,slSide,tp,qty);
+    res.json({ok:true,entryId,slId,tpId});
+  } catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/order/close',async(req,res)=>{
+  if(tradingMode!=='live') return res.json({ok:false,error:'Not in live mode'});
+  try {
+    const {symbol,direction,qty,slId,tpId}=req.body;
+    if(slId) await cancelKuOrder(slId).catch(()=>{});
+    if(tpId) await cancelKuOrder(tpId).catch(()=>{});
+    const closeSide=direction==='LONG'?'sell':'buy';
+    const curPrice=marketCache.find(c=>c.symbol===symbol)?.price||1;
+    const closeId=await placeMarketOrder(symbol,closeSide,qty*curPrice,qty);
+    res.json({ok:true,closeId});
+  } catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+// ── HISTORY ───────────────────────────────────────────────────────
+app.get('/api/history',async(req,res)=>{
+  if(!process.env.TURSO_DATABASE_URL) return res.json({ok:false,error:'Turso not configured'});
+  try {
+    const limit=parseInt(req.query.limit)||50;
+    const rows=await db.execute({sql:`SELECT id,symbol,signal,entry,tp,sl,confidence,outcome,pnl_pct,reasoning,created_at FROM signals ORDER BY id DESC LIMIT ?`,args:[limit]});
+    const total=rows.rows.length,wins=rows.rows.filter(r=>r.outcome==='WIN').length,losses=rows.rows.filter(r=>r.outcome==='LOSS').length;
+    res.json({ok:true,data:rows.rows,stats:{total,wins,losses,winRate:total?(wins/total*100).toFixed(1)+'%':'N/A'}});
+  } catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
+app.get('/health',(req,res)=>res.json({ok:true}));
+app.get('/api/health',(req,res)=>{
+  const btc=marketCache.find(c=>c.symbol==='BTC');
+  res.json({ok:true,coins:marketCache.length,wsConnected,liveCoins:marketCache.filter(c=>c.liveAge<60).length,
+    btc:btc?{price:btc.price,h4:btc.h4?.trend,h1:btc.h1?.trend,rsi:btc.h1?.rsi,macd:btc.h1?.macdBull?'BULL':'BEAR'}:null,
+    keys:{claude:!!CLAUDE_KEY,news:!!NEWSDATA_KEY,turso:!!process.env.TURSO_DATABASE_URL}});
+});
+app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));
+app.use((err,req,res,next)=>res.status(500).json({ok:false,error:String(err.message)}));
+
+// ── START ─────────────────────────────────────────────────────────
+app.listen(PORT,async()=>{
+  console.log(`NEXUS PRO on port ${PORT}`);
+  await initDB();
+  await initialLoad();
+  setInterval(evaluatePendingSignals,5*60*1000);
+  setInterval(async()=>{await initialLoad();},20*60*1000);
+  const SELF=process.env.RENDER_EXTERNAL_URL||`http://localhost:${PORT}`;
+  setInterval(()=>axios.get(`${SELF}/health`,{timeout:5000}).catch(()=>{}),14*60*1000);
+});
