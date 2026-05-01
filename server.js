@@ -3325,7 +3325,7 @@ app.post('/api/forecast/technical', async (req, res) => {
       direction,
       confidence,
       prefilterScore: pf.score || 0,
-      prefilterReasons: pf.reasons || [],
+      prefilterReason: pf.reason || pf.reasons || 'Analyzing...'
       volatilityOk: vf.pass,
       indicators: {
         trend:   { m15: m15.trend || 'N/A', h1: h1.trend || 'N/A', h4: h4.trend || 'N/A', d1: d1.trend || 'N/A' },
