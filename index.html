@@ -3014,7 +3014,7 @@ async function runTechnicalForecast(){
         <div>🎯 TP: <b style="color:#10b981">${j.adaptiveTP||'N/A'}%</b> | SL: <b style="color:#ef4444">${j.adaptiveSL||'N/A'}%</b></div>
         <div>📚 History: L:${hist.longTrades}t ${hist.longWR!==null?hist.longWR+'%WR':'N/A'} | S:${hist.shortTrades}t ${hist.shortWR!==null?hist.shortWR+'%WR':'N/A'}</div>
       </div>
-      ${j.prefilterReasons.length?`<div style="margin-top:4px;color:#6b7280">✅ ${j.prefilterReasons.slice(0,6).join(' | ')}</div>`:''}`;
+       ${j.prefilterReason?`<div>✅ ${j.prefilterReason}</div>`:''}
 
     document.getElementById('fcstTechResult').style.display='block';
     document.getElementById('fcstCost').textContent='Free ✅';
