@@ -4164,8 +4164,8 @@ app.listen(PORT,async()=>{
         const pf = preFilter(coin,false,false);
         if(!pf.score||pf.score<90) return null;
         return {symbol:coin.symbol,...pf,price:coin.price};
-      }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,5);
-
+      }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,5);console.log(`[TOP 5] ${candidates.map(c=>c.symbol+':'+c.direction+':'+Math.round(c.score)).join(' | ')}`);
+          
       // Regime filter
       candidates = candidates.filter(c=>{
         if(regime==='BEAR'&&c.direction==='LONG'){ console.log(`[AUTO] SKIP ${c.symbol} LONG - BEAR`); return false; }
